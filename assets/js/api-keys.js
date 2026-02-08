@@ -10,26 +10,26 @@ export const firebaseConfig = {
 
 // 👑 TIER 1: OWNER (You)
 // Full Access + Super Button + Database Reset
-export const OWNER_EMAIL = "skyruler3281@gmail.com"; 
+export const OWNER_EMAIL = "super@admin.com"; 
 
 // ⚔️ TIER 2: GENERAL ADMINS
 // Can Edit/Delete ANYONE (But no Super Button)
 export const GENERAL_ADMINS = [
-    "co.lead@college.edu",
-    "faculty.lead@college.edu"
+    "skyruler3281@gmail.com",
+    "riteshcsw@gmail.com"
 ];
 
 // 🛡️ TIER 3: CLAN CAPTAINS
 // Can ONLY edit/delete members of their specific Clan
 // Format: "email": "Clan Name"
 export const CLAN_CAPTAINS = {
-    "captain1@gmail.com": "Clan 1",
-    "captain2@gmail.com": "Clan 2",
-    "captain3@gmail.com": "Clan 3",
-    "captain4@gmail.com": "Clan 4",
-    "captain5@gmail.com": "Clan 5",
-    "captain6@gmail.com": "Clan 6",
-    "ritesh.kumar@gmail.com": "Clan 7", // Example: Ritesh only manages Clan 7
-    "captain8@gmail.com": "Clan 8",
-    "captain9@gmail.com": "Clan 9"
+    "admin@clan1.com": "Clan 1",
+    "admin@clan2.com": "Clan 2",
+    "admin@clan3.com": "Clan 3",
+    "admin@clan4.com": "Clan 4",
+    "admin@clan5.com": "Clan 5",
+    "admin@clan6.com": "Clan 6",
+    "admin@clan7.com": "Clan 7", // Example: Ritesh only manages Clan 7
+    "admin@clan8.com": "Clan 8",
+    "admin@clan9.com": "Clan 9"
 };

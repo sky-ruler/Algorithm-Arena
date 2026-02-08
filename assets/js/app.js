@@ -160,26 +160,51 @@ async function parseAndUpload() {
     // 1. Basic Checks
     if(!currentUser) return alert("Login required");
     
-    const btn = document.getElementById('btnUpload'); // Get the button
-    const m = els.uploadSelect.value;
+    const btn = document.getElementById('btnUpload');
+    const m = els.uploadSelect.value; // The Member Name
     const t = document.getElementById('rawInput').value;
     const r = document.getElementById('uploadReview').value;
     
     if(!m || !t) return alert("Missing Data");
 
-    // 2. LOCK THE BUTTON (Prevents Double Click)
+    // ============================================================
+    // 🔒 NEW: HIERARCHY SECURITY CHECK
+    // ============================================================
+    const email = currentUser.email;
+    
+    // A. Find which Clan the target member belongs to
+    let targetClan = "";
+    for (const [cName, members] of Object.entries(CLAN_DATA)) {
+        if (members.includes(m)) {
+            targetClan = cName;
+            break;
+        }
+    }
+
+    // B. Check Permissions
+    const isSelf = (currentUser.displayName === m);
+    const isOwner = (email === OWNER_EMAIL);
+    const isGeneral = GENERAL_ADMINS.includes(email);
+    const managedClan = CLAN_CAPTAINS[email]; // e.g. "Clan 7"
+    const isCaptain = (managedClan === targetClan); // True if Captain manages THIS clan
+
+    if (!isSelf && !isOwner && !isGeneral && !isCaptain) {
+        alert(`⛔ PERMISSION DENIED.\nYou are not authorized to upload for members of ${targetClan}.`);
+        return;
+    }
+    // ============================================================
+
+    // 2. LOCK BUTTON
     btn.disabled = true;
     btn.innerText = "⏳ UPLOADING...";
     btn.style.opacity = "0.5";
     btn.style.cursor = "not-allowed";
 
     try {
-        // 3. YOUR ORIGINAL PARSING LOGIC (Untouched)
+        // 3. PARSE LINKS
         const links = smartParseLinks(t);
-        console.log("Parsed:", links);
 
         if (links.length === 0 && !confirm("No links found. Upload anyway?")) {
-            // If user cancels, we must unlock the button before returning!
             throw new Error("Cancelled by user");
         }
         
@@ -200,17 +225,14 @@ async function parseAndUpload() {
         if(s.exists()) await updateDoc(ref, { history: arrayUnion(entry) });
         else await setDoc(ref, { history: [entry] });
         
-        alert("Upload Successful"); 
+        alert("✅ Upload Successful!"); 
         document.getElementById('rawInput').value = "";
         document.getElementById('uploadReview').value = "";
 
     } catch(err) {
-        // Ignore "Cancelled by user" error, alert others
-        if (err.message !== "Cancelled by user") {
-            alert("Error: " + err.message);
-        }
+        if (err.message !== "Cancelled by user") alert("Error: " + err.message);
     } finally {
-        // 5. ALWAYS UNLOCK BUTTON (Even if error or success)
+        // 5. UNLOCK BUTTON
         btn.disabled = false;
         btn.innerText = "UPLOAD UPDATE";
         btn.style.opacity = "1";
@@ -346,8 +368,38 @@ function initDropdowns() {
 }
 function setupUploadDropdown() {
     const s = els.uploadSelect; if(!s) return; s.innerHTML = '';
-    if(isAdmin) { s.innerHTML='<option value="">-- Select Member --</option>'; for(const [t,m] of Object.entries(CLAN_DATA)) { const g=document.createElement('optgroup'); g.label=t; m.forEach(x=>{const o=new Option(x,x); g.appendChild(o); s.appendChild(o);}); } }
-    else if(currentUser?.displayName) { s.add(new Option(currentUser.displayName, currentUser.displayName)); s.disabled=true; }
+    
+    if (!currentUser) return;
+
+    const email = currentUser.email;
+    
+    // 1. Identify Role
+    const isOwner = (email === OWNER_EMAIL);
+    const isGeneral = GENERAL_ADMINS.includes(email);
+    const myClan = CLAN_CAPTAINS[email]; // e.g., "Clan 7"
+
+    if (isOwner || isGeneral) {
+        // CASE A: GOD MODE (Show Everyone)
+        s.innerHTML = '<option value="">-- Select Any Member --</option>';
+        for(const [t,m] of Object.entries(CLAN_DATA)) { 
+            const g = document.createElement('optgroup'); g.label = t; 
+            m.forEach(x => s.add(new Option(x, x)));
+            s.appendChild(g);
+        }
+    } 
+    else if (myClan) {
+        // CASE B: CLAN CAPTAIN (Show Only My Clan)
+        s.innerHTML = `<option value="">-- Select ${myClan} Member --</option>`;
+        const members = CLAN_DATA[myClan] || [];
+        const g = document.createElement('optgroup'); g.label = myClan;
+        members.forEach(x => s.add(new Option(x, x)));
+        s.appendChild(g);
+    } 
+    else if (currentUser.displayName) {
+        // CASE C: STUDENT (Show Only Self)
+        s.add(new Option(currentUser.displayName, currentUser.displayName)); 
+        s.disabled = true; // Lock the dropdown
+    }
 }
 function toggleModal(m,s) { s ? m.classList.remove('hidden') : m.classList.add('hidden'); }
 function switchAuthTab(mode) {
