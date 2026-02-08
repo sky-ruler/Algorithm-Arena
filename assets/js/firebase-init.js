@@ -1,23 +1,31 @@
-import { firebaseConfig } from './api-keys.js';
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js';
-import { getFirestore, enableIndexedDbPersistence } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+import { 
+    getFirestore, 
+    initializeFirestore, 
+    persistentLocalCache, 
+    persistentMultipleTabManager 
+} from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
 import { getAuth } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
+import { firebaseConfig } from './api-keys.js';
 
 // 1. Initialize App
 const app = initializeApp(firebaseConfig);
-const db = getFirestore(app);
-const auth = getAuth(app);
 
-// 2. Enable Offline Mode
-enableIndexedDbPersistence(db).catch((err) => {
-    console.warn("Persistence Issue:", err.code);
+// 2. Initialize Firestore with Modern Multi-Tab Persistence
+// This fixes the "failed-precondition" error and the deprecation warning
+const db = initializeFirestore(app, {
+    localCache: persistentLocalCache({
+        tabManager: persistentMultipleTabManager() 
+    })
 });
 
-// 3. EXPORTS
-export { db, auth };
+// 3. Initialize Auth
+const auth = getAuth(app);
 
-// 4. *** THE MAGIC KEY ***
-// This lets you run scripts in the Console
+// 4. Expose for Debugging (Console Access)
 window.db = db;
 window.auth = auth;
 console.log("✅ Firebase Connected & Exposed to Console");
+
+// 5. Export for App Usage
+export { db, auth };

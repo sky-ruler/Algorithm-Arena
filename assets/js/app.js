@@ -255,19 +255,46 @@ function loadData() {
 function renderUI(store) {
     const c = els.teamsContainer; if(!c) return; c.innerHTML = '';
     
-    // Sort Clans
+    // 1. 🧠 SMART SORT (Fixes the "Weird Order")
+    // Use 'localeCompare' with {numeric: true} to handle "Clan 1, Clan 2, Clan 10" AND text names perfectly.
     const sortedClans = Object.entries(CLAN_DATA).sort((a, b) => {
-        const numA = parseInt(a[0].replace(/\D/g, '')) || 0;
-        const numB = parseInt(b[0].replace(/\D/g, '')) || 0;
-        return numA - numB;
+        return a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' });
     });
 
-    // Resolve Permissions for Buttons
     const email = currentUser ? currentUser.email.toLowerCase() : "";
+    
+    // 2. Identify Roles
     const isOwner = (email === OWNER_EMAIL.toLowerCase());
     const isGeneral = GENERAL_ADMINS.some(x => x.toLowerCase() === email);
-    const managedClan = CLAN_CAPTAINS[email] || CLAN_CAPTAINS[currentUser?.email];
+    // Safety: Handle if CLAN_CAPTAINS is undefined or null
+    const managedClan = (CLAN_CAPTAINS && CLAN_CAPTAINS[email]) || (CLAN_CAPTAINS && CLAN_CAPTAINS[currentUser?.email]);
 
+    // 3. 📌 PIN MY CLAN TO TOP 
+    // Logic: If you are a specific Captain or Student (NOT a General Admin), move your clan to #1.
+    if (currentUser && !isOwner && !isGeneral) {
+        let myClan = managedClan; 
+
+        // If not a Captain, check if they are a regular Member
+        if (!myClan && currentUser.displayName) {
+            for (const [cName, members] of Object.entries(CLAN_DATA)) {
+                if (members.includes(currentUser.displayName)) {
+                    myClan = cName;
+                    break;
+                }
+            }
+        }
+
+        // If we found their clan, move it to the top!
+        if (myClan) {
+            const idx = sortedClans.findIndex(x => x[0] === myClan);
+            if (idx > -1) {
+                const [target] = sortedClans.splice(idx, 1); // Remove it
+                sortedClans.unshift(target); // Paste it at the top
+            }
+        }
+    }
+
+    // 4. Render the List
     for (const [t, m] of sortedClans) {
         // Can this user manage THIS clan?
         const canManageClan = isOwner || isGeneral || (managedClan === t);
