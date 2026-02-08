@@ -139,63 +139,64 @@ function loadData() {
 }
 
 async function parseAndUpload() {
+    // 1. Basic Checks
     if(!currentUser) return alert("Login required");
     
-    // 1. GET BUTTON & INPUTS
-    const btn = document.getElementById('btnUpload');
+    const btn = document.getElementById('btnUpload'); // Get the button
     const m = els.uploadSelect.value;
     const t = document.getElementById('rawInput').value;
     const r = document.getElementById('uploadReview').value;
-
+    
     if(!m || !t) return alert("Missing Data");
 
-    // 2. DISABLE BUTTON (Prevent Double Clicks)
+    // 2. LOCK THE BUTTON (Prevents Double Click)
     btn.disabled = true;
     btn.innerText = "⏳ UPLOADING...";
-    btn.classList.add("opacity-50", "cursor-not-allowed");
+    btn.style.opacity = "0.5";
+    btn.style.cursor = "not-allowed";
 
-    const links = smartParseLinks(t);
-
-    // Safety Check for empty links
-    if (links.length === 0 && !confirm("No links found. Upload anyway?")) {
-        // Re-enable button if they cancel
-        btn.disabled = false;
-        btn.innerText = "UPLOAD UPDATE";
-        btn.classList.remove("opacity-50", "cursor-not-allowed");
-        return;
-    }
-    
-    // Logic to ensure "Day" isn't just a link
-    const firstLine = t.split('\n')[0].replace(/http.*/,'').trim();
-    const day = firstLine || `Day ${new Date().getDate()}`; // Default to today's date if empty
-
-    const entry = { 
-        id: Date.now().toString(), 
-        day, 
-        links, 
-        review: r, 
-        timestamp: new Date().toISOString(), 
-        author: currentUser.email 
-    };
-    
-    const ref = doc(db, "submissions", m);
-    
     try {
+        // 3. YOUR ORIGINAL PARSING LOGIC (Untouched)
+        const links = smartParseLinks(t);
+        console.log("Parsed:", links);
+
+        if (links.length === 0 && !confirm("No links found. Upload anyway?")) {
+            // If user cancels, we must unlock the button before returning!
+            throw new Error("Cancelled by user");
+        }
+        
+        const day = t.split('\n')[0].replace(/http.*/,'').trim() || "Update";
+        const entry = { 
+            id: Date.now().toString(), 
+            day, 
+            links, 
+            review: r, 
+            timestamp: new Date().toISOString(), 
+            author: currentUser.email 
+        };
+        
+        // 4. UPLOAD
+        const ref = doc(db, "submissions", m);
         const s = await getDoc(ref);
+        
         if(s.exists()) await updateDoc(ref, { history: arrayUnion(entry) });
         else await setDoc(ref, { history: [entry] });
         
-        // Success!
-        alert("✅ Update Uploaded Successfully!"); 
+        alert("Upload Successful"); 
         document.getElementById('rawInput').value = "";
         document.getElementById('uploadReview').value = "";
-    } catch(err) { 
-        alert("❌ Error: " + err.message); 
+
+    } catch(err) {
+        // Ignore "Cancelled by user" error, alert others
+        if (err.message !== "Cancelled by user") {
+            alert("Error: " + err.message);
+        }
     } finally {
-        // 3. RE-ENABLE BUTTON (Always runs, even if error)
+        // 5. ALWAYS UNLOCK BUTTON (Even if error or success)
         btn.disabled = false;
         btn.innerText = "UPLOAD UPDATE";
-        btn.classList.remove("opacity-50", "cursor-not-allowed");
+        btn.style.opacity = "1";
+        btn.style.cursor = "pointer";
     }
 }
 
