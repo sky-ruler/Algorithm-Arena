@@ -1,5 +1,5 @@
 import { db, auth } from './firebase-init.js';
-import { ADMIN_EMAIL } from './api-keys.js';
+import { ADMIN_EMAILS } from './api-keys.js';
 import { smartParseLinks } from './utils.js';
 import { fetchClanStructure, addMemberToClan, removeMember, createNewClan, seedDatabase } from './admin.js';
 import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, arrayUnion } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
