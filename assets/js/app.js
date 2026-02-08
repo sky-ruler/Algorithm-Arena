@@ -1,5 +1,5 @@
 import { db, auth } from './firebase-init.js';
-import { ADMIN_EMAIL, OWNER_EMAIL } from './api-keys.js';
+import { OWNER_EMAIL, GENERAL_ADMINS, CLAN_CAPTAINS } from './api-keys.js'; // USE THIS
 import { smartParseLinks } from './utils.js';
 import { fetchClanStructure, addMemberToClan, removeMember, createNewClan, seedDatabase } from './admin.js';
 import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, arrayUnion } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
@@ -69,20 +69,25 @@ function updateUI(user) {
 
     if (user) {
         // --- LOGGED IN ---
+        const email = user.email;
         
-        // 1. Check Permissions
-        isAdmin = ADMIN_EMAIL.includes(user.email);
-        const isOwner = (user.email === OWNER_EMAIL); 
+        // CALCULATE ROLES
+        const isOwner = (email === OWNER_EMAIL);
+        const isGeneralAdmin = GENERAL_ADMINS.includes(email);
+        const clanManaged = CLAN_CAPTAINS[email]; // Returns "Clan X" or undefined
         
-        // 2. UI Updates
+        // GLOBAL ADMIN FLAG (For UI usage)
+        isAdmin = isOwner || isGeneralAdmin || !!clanManaged;
+
         els.landing.classList.add('hidden');
         els.dashboard.classList.remove('hidden');
         
-        // 3. Navbar
+        // Navbar
         els.navActions.innerHTML = `
             <div class="flex gap-3 items-center">
                 ${isOwner ? '<button id="btnOpenSuper" class="text-xs bg-indigo-900 text-indigo-400 px-3 py-1 rounded hover:bg-indigo-800 transition">SUPER</button>' : ''}
                 <span class="text-xs text-slate-400 hidden sm:inline">${user.email}</span>
+                ${clanManaged ? `<span class="text-[10px] bg-slate-800 text-indigo-300 px-2 py-1 rounded border border-indigo-900/50">${clanManaged} Captain</span>` : ''}
                 <button id="btnLogout" class="text-xs text-red-400 px-3 py-1 rounded border border-red-900 hover:bg-red-900/20 transition">LOGOUT</button>
             </div>`;
             
@@ -94,23 +99,16 @@ function updateUI(user) {
         
         document.getElementById('welcomeMsg').innerText = `Welcome, ${user.displayName || 'Warrior'}`;
         setupUploadDropdown();
-
-        // 4. *** FORCE RE-RENDER ***
-        // This is the magic line that makes the Delete buttons appear instantly!
-        renderUI(latestStore); 
+        renderUI(latestStore); // Force Refresh
 
     } else {
-        // --- LOGGED OUT (VISITOR) ---
+        // --- LOGGED OUT ---
         isAdmin = false;
-        
         els.landing.classList.remove('hidden');
         els.dashboard.classList.add('hidden');
         els.superPanel?.classList.add('hidden');
-        
         els.navActions.innerHTML = `<button id="btnLoginOpen" class="bg-slate-800 text-white px-4 py-2 rounded text-xs">LOGIN</button>`;
         document.getElementById('btnLoginOpen').addEventListener('click', () => toggleModal(els.authModal, true));
-
-        // Force re-render to hide buttons if they were visible
         renderUI(latestStore);
     }
 }
@@ -243,15 +241,24 @@ async function saveEdit() {
 function renderUI(store) {
     const c = els.teamsContainer; if(!c) return; c.innerHTML = '';
     
-    // 1. Sort Clans Logic
+    // 1. Sort Clans
     const sortedClans = Object.entries(CLAN_DATA).sort((a, b) => {
         const numA = parseInt(a[0].replace(/\D/g, '')) || 0;
         const numB = parseInt(b[0].replace(/\D/g, '')) || 0;
         return numA - numB;
     });
 
+    const userEmail = currentUser ? currentUser.email : "";
+    
+    // 2. CHECK GLOBAL ROLES
+    const isGlobalAdmin = (userEmail === OWNER_EMAIL) || GENERAL_ADMINS.includes(userEmail);
+    const managedClan = CLAN_CAPTAINS[userEmail]; // e.g., "Clan 7"
+
     for (const [t, m] of sortedClans) {
-        // 2. Create Clan Section
+        // 3. CHECK LOCAL ROLE (Is user the Captain of THIS clan?)
+        const isClanCaptain = (managedClan === t);
+        const canManageClan = isGlobalAdmin || isClanCaptain;
+
         const d = document.createElement('div');
         d.innerHTML = `<div class="flex items-center gap-4 mb-6"><div class="bg-indigo-600 w-1 h-8 rounded-r"></div><h2 class="text-2xl font-bold text-white">${t}</h2><div class="h-px bg-slate-800 flex-grow"></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="grid-${t.replace(/\s/g,'')}"></div>`;
         const g = d.querySelector(`div[id*="grid-"]`);
@@ -261,21 +268,18 @@ function renderUI(store) {
             const card = document.createElement('div');
             card.className = "glass rounded-xl overflow-hidden flex flex-col h-[500px]";
             
-            // 3. Card Header
-            card.innerHTML = `<div class="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between"><h3 class="font-bold text-white">${mem}</h3>${isAdmin ? `<button class="text-[10px] text-red-400" onclick="window.removeMemberGlobal('${t}','${mem}')">✕</button>` : ''}</div><div class="p-4 overflow-y-auto custom-scroll flex-grow"></div>`;
+            // Only show 'Remove Member' X if they manage this clan
+            card.innerHTML = `<div class="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between"><h3 class="font-bold text-white">${mem}</h3>${canManageClan ? `<button class="text-[10px] text-red-400" onclick="window.removeMemberGlobal('${t}','${mem}')">✕</button>` : ''}</div><div class="p-4 overflow-y-auto custom-scroll flex-grow"></div>`;
             const l = card.querySelector('.custom-scroll');
 
-            // 4. "No Data" State
             if (h.length === 0) {
                 l.innerHTML = '<div class="text-center py-8 opacity-50"><div class="text-2xl mb-2">⚔️</div><div class="text-xs text-slate-400 font-mono">No battles fought yet.</div></div>';
             }
 
-            // 5. Render Each Post
             h.forEach(e => {
-                // FILTER: Hide deleted posts from normal users
-                if (e.deletedBy && !isAdmin) return;
+                // HIDE deleted posts from students (but show to Managers of this clan)
+                if (e.deletedBy && !canManageClan) return;
 
-                // STYLE: Red background if deleted
                 const isDeleted = !!e.deletedBy;
                 const bgClass = isDeleted ? "bg-red-900/10 border-red-900/50 grayscale opacity-70" : "bg-slate-900/80 border-slate-700";
                 
@@ -284,35 +288,31 @@ function renderUI(store) {
                 
                 const safeLinks = encodeURIComponent(JSON.stringify(e.links));
                 
-                // PERMISSIONS: Can Edit/Delete?
-                const canEdit = (isAdmin || (currentUser && currentUser.displayName === mem)) && !isDeleted;
-                const canDelete = isAdmin && !isDeleted;
+                // PERMISSIONS: 
+                // 1. Own post? Yes.
+                // 2. Manager of THIS clan? Yes.
+                const canEdit = (canManageClan || (currentUser && currentUser.displayName === mem)) && !isDeleted;
+                const canDelete = canManageClan && !isDeleted; // Only Managers can delete
 
-                // HEADER HTML
                 let headerHTML = `<div class="flex justify-between mb-2">`;
                 
                 if (isDeleted) {
-                    // Show WHO deleted it (Only Admins see this)
                     const deleterName = e.deletedBy.split('@')[0];
                     headerHTML += `<span class="text-red-400 font-bold text-[10px] uppercase">🗑️ DELETED BY: ${deleterName}</span>`;
                 } else {
                     headerHTML += `<span class="text-indigo-400 font-bold text-[10px] uppercase">${e.day}</span>`;
                 }
 
-                // ACTION BUTTONS (Edit / Delete)
                 headerHTML += `<div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">`;
                 if (canEdit) {
                     headerHTML += `<button onclick="window.openEditModal('${mem}','${e.id||e.timestamp}','${e.day}','${safeLinks}','${e.review||''}')" class="text-blue-400 text-xs hover:text-white">✎</button>`;
                 }
                 if (canDelete) {
-                    // THE NEW DELETE BUTTON
                     headerHTML += `<button onclick="window.deleteSubmissionGlobal('${mem}','${e.id||e.timestamp}')" class="text-red-500 text-xs hover:text-red-300">🗑️</button>`;
                 }
                 headerHTML += `</div></div>`;
-                
                 r.innerHTML = headerHTML;
 
-                // LINKS CONTENT
                 if (!isDeleted) {
                     e.links.forEach(link => {
                         r.innerHTML += `<a href="${link.url}" target="_blank" class="block text-xs text-slate-300 hover:text-white truncate transition-colors">>> ${link.label}</a>`;

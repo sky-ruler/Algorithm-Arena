@@ -8,14 +8,28 @@ export const firebaseConfig = {
     measurementId: "G-SLEYZ0FGQ2"
 };
 
-// Level 1: THE OWNER (Only 1 Person - YOU)
-// This person gets the "SUPER" button.
+// 👑 TIER 1: OWNER (You)
+// Full Access + Super Button + Database Reset
 export const OWNER_EMAIL = "skyruler3281@gmail.com"; 
 
-// Level 2: MODERATORS (List of people)
-// These people can Edit/Delete tasks, but NO Super Button.
-export const ADMIN_EMAIL = [
-    "admin@clan7.com",
-    "skyruler3281@gmail.com", // You should be in both lists!
-    "admin@clan6.com"
+// ⚔️ TIER 2: GENERAL ADMINS
+// Can Edit/Delete ANYONE (But no Super Button)
+export const GENERAL_ADMINS = [
+    "co.lead@college.edu",
+    "faculty.lead@college.edu"
 ];
+
+// 🛡️ TIER 3: CLAN CAPTAINS
+// Can ONLY edit/delete members of their specific Clan
+// Format: "email": "Clan Name"
+export const CLAN_CAPTAINS = {
+    "captain1@gmail.com": "Clan 1",
+    "captain2@gmail.com": "Clan 2",
+    "captain3@gmail.com": "Clan 3",
+    "captain4@gmail.com": "Clan 4",
+    "captain5@gmail.com": "Clan 5",
+    "captain6@gmail.com": "Clan 6",
+    "ritesh.kumar@gmail.com": "Clan 7", // Example: Ritesh only manages Clan 7
+    "captain8@gmail.com": "Clan 8",
+    "captain9@gmail.com": "Clan 9"
+};
