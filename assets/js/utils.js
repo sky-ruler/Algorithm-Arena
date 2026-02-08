@@ -1,41 +1,69 @@
 export function smartParseLinks(rawText) {
     if (!rawText) return [];
     
-    // Split by newlines to handle multiple links
     const lines = rawText.split('\n');
     const links = [];
     
-    // AGGRESSIVE REGEX: Matches http, https, www, or typical domains (example.com)
-    // This catches "leetcode.com" even without https://
-    const urlRegex = /((https?:\/\/)|(www\.)|[a-zA-Z0-9-]+\.(com|org|net|edu|io|app))[^\s]*/i;
+    // 🧠 ULTRA-SMART REGEX
+    // 1. Matches http/https/www explicitly
+    // 2. Matches ANY domain (word.extension) where extension is 2+ chars
+    // 3. Filters out common code file extensions like .js or .css to avoid false positives
+    // 4. Catches long URL paths
+    const urlRegex = /((https?:\/\/)|(www\.)|(?!.*(\.js|\.css|\.html)$)[a-zA-Z0-9][a-zA-Z0-9-]{1,61}\.[a-zA-Z]{2,})(\/[^\s]*)?/gi;
 
     lines.forEach(line => {
-        const cleanLine = line.trim();
-        
-        // Skip lines that are clearly just the Header (e.g. "Day 5")
-        if (cleanLine.toLowerCase().startsWith('day ')) return;
+        let cleanLine = line.trim();
         if (!cleanLine) return;
+        
+        // Skip lines that are clearly just the "Day X" header
+        if (/^day\s*\d+/i.test(cleanLine)) return;
 
-        const match = cleanLine.match(urlRegex);
-        if (match) {
-            let url = match[0];
-            
-            // 🔧 AUTO-FIX: If http is missing, add it.
-            // (e.g., "leetcode.com" -> "https://leetcode.com")
-            if (!url.startsWith('http')) {
-                url = 'https://' + url;
-            }
+        // Find ALL links in the line (Global Match)
+        // This catches multiple links in one row
+        const matches = [...cleanLine.matchAll(urlRegex)];
 
-            // Extract the text AROUND the link to use as the label
-            // e.g., "Two Sum - leetcode.com" -> Label: "Two Sum"
-            let label = cleanLine.replace(match[0], '')
-                                .replace(/[:-]/g, '') // Remove colons/dashes
-                                .trim();
-            
-            // Default label if they just pasted a raw link
-            if (!label) label = "Submission Link";
-            
-            links.push({ label, url });
+        if (matches.length > 0) {
+            matches.forEach(match => {
+                let url = match[0];
+
+                // 🧹 CLEANUP: Remove trailing punctuation
+                // Catches things like "google.com," or "(google.com)"
+                url = url.replace(/[).,;\]]+$/, "");
+
+                // 🔗 PROTOCOL FIX: Add https if missing
+                let finalUrl = url;
+                if (!finalUrl.startsWith('http')) {
+                    finalUrl = 'https://' + finalUrl;
+                }
+
+                // 🏷️ LABEL LOGIC
+                let label = "";
+
+                // Scenario A: Line has text + ONE link (e.g., "Two Sum - leetcode.com")
+                // We extract "Two Sum" as the label
+                if (matches.length === 1) {
+                    label = cleanLine.replace(match[0], '')   // Remove the URL text
+                                   .replace(/[\[\]()]/g, '')  // Remove remaining brackets
+                                   .replace(/^[-:–>\s]+|[-:–<\s]+$/g, '') // Trim separators like "- " or ": "
+                                   .trim();
+                }
+
+                // Scenario B: No text found OR Multiple links on one line
+                // We generate a pretty label from the domain (e.g., "leetcode.com" -> "Leetcode")
+                if (!label || label.length < 2) {
+                    try {
+                        const hostname = new URL(finalUrl).hostname;
+                        // Remove 'www.' and get the main name
+                        const name = hostname.replace('www.', '').split('.')[0];
+                        // Capitalize it (e.g., "leetcode" -> "Leetcode")
+                        label = name.charAt(0).toUpperCase() + name.slice(1);
+                    } catch (e) {
+                        label = "View Link";
+                    }
+                }
+
+                links.push({ label, url: finalUrl });
+            });
         }
     });
     
