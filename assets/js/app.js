@@ -140,27 +140,63 @@ function loadData() {
 
 async function parseAndUpload() {
     if(!currentUser) return alert("Login required");
+    
+    // 1. GET BUTTON & INPUTS
+    const btn = document.getElementById('btnUpload');
     const m = els.uploadSelect.value;
     const t = document.getElementById('rawInput').value;
     const r = document.getElementById('uploadReview').value;
-    if(!m || !t) return alert("Missing Data");
-    
-    // DEBUG LOG
-    const links = smartParseLinks(t);
-    console.log("Parsed:", links);
 
-    if (links.length === 0 && !confirm("No links found. Upload anyway?")) return;
+    if(!m || !t) return alert("Missing Data");
+
+    // 2. DISABLE BUTTON (Prevent Double Clicks)
+    btn.disabled = true;
+    btn.innerText = "⏳ UPLOADING...";
+    btn.classList.add("opacity-50", "cursor-not-allowed");
+
+    const links = smartParseLinks(t);
+
+    // Safety Check for empty links
+    if (links.length === 0 && !confirm("No links found. Upload anyway?")) {
+        // Re-enable button if they cancel
+        btn.disabled = false;
+        btn.innerText = "UPLOAD UPDATE";
+        btn.classList.remove("opacity-50", "cursor-not-allowed");
+        return;
+    }
     
-    const day = t.split('\n')[0].replace(/http.*/,'').trim() || "Update";
-    const entry = { id: Date.now().toString(), day, links, review: r, timestamp: new Date().toISOString(), author: currentUser.email };
+    // Logic to ensure "Day" isn't just a link
+    const firstLine = t.split('\n')[0].replace(/http.*/,'').trim();
+    const day = firstLine || `Day ${new Date().getDate()}`; // Default to today's date if empty
+
+    const entry = { 
+        id: Date.now().toString(), 
+        day, 
+        links, 
+        review: r, 
+        timestamp: new Date().toISOString(), 
+        author: currentUser.email 
+    };
     
     const ref = doc(db, "submissions", m);
+    
     try {
         const s = await getDoc(ref);
         if(s.exists()) await updateDoc(ref, { history: arrayUnion(entry) });
         else await setDoc(ref, { history: [entry] });
-        alert("Upload Successful"); document.getElementById('rawInput').value = "";
-    } catch(err) { alert("Error: " + err.message); }
+        
+        // Success!
+        alert("✅ Update Uploaded Successfully!"); 
+        document.getElementById('rawInput').value = "";
+        document.getElementById('uploadReview').value = "";
+    } catch(err) { 
+        alert("❌ Error: " + err.message); 
+    } finally {
+        // 3. RE-ENABLE BUTTON (Always runs, even if error)
+        btn.disabled = false;
+        btn.innerText = "UPLOAD UPDATE";
+        btn.classList.remove("opacity-50", "cursor-not-allowed");
+    }
 }
 
 async function saveEdit() {
@@ -194,13 +230,13 @@ function renderUI(store) {
 
     for (const [t, m] of sortedClans) {
         const d = document.createElement('div');
-        d.innerHTML = `<div class="flex items-center gap-4 mb-6"><div class="bg-indigo-600 w-1 h-8 rounded-r"></div><h2 class="text-2xl font-bold text-white">${t}</h2><div class="h-px bg-slate-800 flex-grow"></div></div><div class="grid grid-cols-1 lg:grid-cols-3 gap-6" id="grid-${t.replace(/\s/g,'')}"></div>`;
+        d.innerHTML = `<div class="flex items-center gap-4 mb-6"><div class="bg-indigo-600 w-1 h-8 rounded-r"></div><h2 class="text-2xl font-bold text-white">${t}</h2><div class="h-px bg-slate-800 flex-grow"></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="grid-${t.replace(/\s/g,'')}"></div>`;
         const g = d.querySelector(`div[id*="grid-"]`);
         m.forEach(mem => {
             const h = (store[mem] || []).reverse();
             const card = document.createElement('div');
             card.className = "glass rounded-xl overflow-hidden flex flex-col h-[500px]";
-            card.innerHTML = `<div class="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between"><h3 class="font-bold text-white">${mem}</h3>${isAdmin ? `<button class="text-[10px] text-red-400" onclick="window.removeMemberGlobal('${t}','${mem}')">✕</button>` : ''}</div><div class="p-4 overflow-y-auto custom-scroll flex-grow">${h.length ? '' : '<div class="text-center text-xs text-slate-500 py-8">NO DATA</div>'}</div>`;
+            card.innerHTML = `<div class="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between"><h3 class="font-bold text-white">${mem}</h3>${isAdmin ? `<button class="text-[10px] text-red-400" onclick="window.removeMemberGlobal('${t}','${mem}')">✕</button>` : ''}</div><div class="p-4 overflow-y-auto custom-scroll flex-grow">${h.length ? '' : '<div class="text-center py-8 opacity-50"><div class="text-2xl mb-2">⚔️</div><div class="text-xs text-slate-400 font-mono">No battles fought yet.</div></div>'}</div>`;
             const l = card.querySelector('.custom-scroll');
             h.forEach(e => {
                 const r = document.createElement('div');
