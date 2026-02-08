@@ -69,7 +69,7 @@ function updateUI(user) {
     if (user) {
         // --- LOGGED IN ---
         // Check if the user's email is inside the list
-        isAdmin = ADMIN_EMAILS.includes(user.email);
+        isAdmin = ADMIN_EMAIL.includes(user.email);
         
         // Hide Landing, Show Dashboard
         els.landing.classList.add('hidden');
