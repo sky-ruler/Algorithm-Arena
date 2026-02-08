@@ -375,15 +375,20 @@ function setupUploadDropdown() {
     
     // 1. Identify Role
     const isOwner = (email === OWNER_EMAIL);
-    const isGeneral = GENERAL_ADMINS && GENERAL_ADMINS.includes(email);
-    const myClan = CLAN_CAPTAINS ? CLAN_CAPTAINS[email] : undefined; // e.g., "Clan 7"
+    // Safety Check: Ensure GENERAL_ADMINS is an array before checking
+    const isGeneral = Array.isArray(GENERAL_ADMINS) && GENERAL_ADMINS.includes(email);
+    const myClan = CLAN_CAPTAINS ? CLAN_CAPTAINS[email] : undefined; 
+
+    // 🕵️ DEBUGGER: Check your browser console to see this!
+    console.log(`User: ${email} | Owner: ${isOwner} | General: ${isGeneral} | Captain: ${myClan}`);
 
     if (isOwner || isGeneral) {
-        // CASE A: SUPER ADMIN (Show Everyone)
+        // CASE A: GOD MODE (Show Everyone)
         s.innerHTML = '<option value="">-- Select Any Member --</option>';
         for(const [t,m] of Object.entries(CLAN_DATA)) { 
             const g = document.createElement('optgroup'); g.label = t; 
-            m.forEach(x => s.add(new Option(x, x)));
+            // FIX: Add options to 'g' (Group), not 's' (Select)
+            m.forEach(x => g.appendChild(new Option(x, x)));
             s.appendChild(g);
         }
     } 
@@ -391,16 +396,20 @@ function setupUploadDropdown() {
         // CASE B: CLAN CAPTAIN (Show Only My Clan)
         s.innerHTML = `<option value="">-- Select ${myClan} Member --</option>`;
         const members = CLAN_DATA[myClan] || [];
+        
         const g = document.createElement('optgroup'); g.label = myClan;
-        members.forEach(x => s.add(new Option(x, x)));
+        // FIX: Add options to 'g' (Group), not 's' (Select)
+        members.forEach(x => g.appendChild(new Option(x, x))); 
+        
         s.appendChild(g);
     } 
     else if (currentUser.displayName) {
         // CASE C: STUDENT (Show Only Self)
         s.add(new Option(currentUser.displayName, currentUser.displayName)); 
-        s.disabled = true; // Lock the dropdown
+        s.disabled = true; 
     }
 }
+
 function toggleModal(m,s) { s ? m.classList.remove('hidden') : m.classList.add('hidden'); }
 function switchAuthTab(mode) {
     const l = mode==='login';
