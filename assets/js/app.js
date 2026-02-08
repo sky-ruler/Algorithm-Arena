@@ -375,11 +375,11 @@ function setupUploadDropdown() {
     
     // 1. Identify Role
     const isOwner = (email === OWNER_EMAIL);
-    const isGeneral = GENERAL_ADMINS.includes(email);
-    const myClan = CLAN_CAPTAINS[email]; // e.g., "Clan 7"
+    const isGeneral = GENERAL_ADMINS && GENERAL_ADMINS.includes(email);
+    const myClan = CLAN_CAPTAINS ? CLAN_CAPTAINS[email] : undefined; // e.g., "Clan 7"
 
     if (isOwner || isGeneral) {
-        // CASE A: GOD MODE (Show Everyone)
+        // CASE A: SUPER ADMIN (Show Everyone)
         s.innerHTML = '<option value="">-- Select Any Member --</option>';
         for(const [t,m] of Object.entries(CLAN_DATA)) { 
             const g = document.createElement('optgroup'); g.label = t; 
