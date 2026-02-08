@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GDGoC Algorithm Arena</title> <link rel="icon" href="data:,">
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>tailwind.config = { theme: { extend: { colors: { brand: { dark: '#0b1121', card: '#1e293b', accent: '#6366f1' } } } } }</script>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Inter:wght@300;400;600;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="assets/css/style.css">
+    
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+</head>
+<body class="font-sans min-h-screen flex flex-col bg-[#0b1121] text-slate-200">
+
+    <div id="authModal" class="hidden fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div class="glass p-8 rounded-xl w-96 max-w-full mx-auto relative">
+            <button class="absolute top-4 right-4 text-slate-500 hover:text-white">✕</button>
+            <div class="flex gap-4 mb-6 border-b border-slate-700 pb-2">
+                <button id="tabLogin" class="text-white font-bold border-b-2 border-indigo-500 pb-1">LOGIN</button>
+                <button id="tabSignup" class="text-slate-500 pb-1 hover:text-white">REGISTER</button>
+            </div>
+            <div id="loginForm">
+                <input type="email" id="loginEmail" placeholder="Email" class="w-full bg-slate-900 border border-slate-700 p-3 rounded mb-3 text-white outline-none">
+                <input type="password" id="loginPass" placeholder="Password" class="w-full bg-slate-900 border border-slate-700 p-3 rounded mb-6 text-white outline-none">
+                <button class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-3 rounded btn-hover">ENTER ARENA</button>
+            </div>
+            <div id="signupForm" class="hidden">
+                <select id="signupName" class="w-full bg-slate-900 border border-slate-700 p-3 rounded mb-3 text-white outline-none"></select>
+                <input type="email" id="signupEmail" placeholder="Email" class="w-full bg-slate-900 border border-slate-700 p-3 rounded mb-3 text-white outline-none">
+                <input type="password" id="signupPass" placeholder="Create Password" class="w-full bg-slate-900 border border-slate-700 p-3 rounded mb-6 text-white outline-none">
+                <button class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded btn-hover">JOIN CLAN</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="editModal" class="hidden fixed inset-0 bg-black/90 backdrop-blur-sm z-50 flex items-center justify-center">
+        <div class="glass p-6 rounded-xl w-[500px] max-w-full mx-auto border border-indigo-500/30 shadow-2xl">
+            <h3 class="text-lg font-bold text-white mb-4 flex items-center gap-2">
+                <span class="text-indigo-400">✎</span> Edit Entry
+            </h3>
+            <input type="hidden" id="editMemberName">
+            <input type="hidden" id="editTimestamp">
+            <div class="space-y-4">
+                <div><label class="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Day / Title</label><input type="text" id="editDay" class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white outline-none mt-1"></div>
+                <div><label class="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Raw Links</label><textarea id="editLinksRaw" rows="5" class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-xs font-mono text-slate-300 outline-none mt-1"></textarea></div>
+                <div><label class="text-[10px] text-slate-400 uppercase font-mono tracking-wider">Review / Note</label><input type="text" id="editReview" class="w-full bg-slate-900 border border-slate-700 p-2 rounded text-white outline-none mt-1"></div>
+            </div>
+            <div class="flex gap-3 mt-6">
+                <button class="flex-1 bg-indigo-600 hover:bg-indigo-500 text-white font-bold py-2 rounded btn-hover transition">SAVE CHANGES</button>
+                <button class="px-4 py-2 text-slate-400 hover:text-white transition">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <header class="border-b border-slate-800 bg-slate-900/50 sticky top-0 z-40 backdrop-blur-md">
+        <div class="max-w-7xl mx-auto px-4 py-4 flex justify-between items-center">
+            <div>
+                <h1 class="text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">ALGORITHM ARENA</h1>
+                <p class="text-[10px] text-slate-500 tracking-widest font-mono mt-1">GDGoC@SOA LEAGUE | SEASON 1.0</p>
+            </div>
+            <div id="navActions">
+                <button id="btnLoginOpen" class="text-xs font-mono bg-slate-800 border border-slate-700 hover:border-indigo-500 text-white px-4 py-2 rounded">LOGIN</button>
+            </div>
+        </div>
+    </header>
+
+    <section id="landing" class="max-w-7xl mx-auto px-4 py-12 text-center animate-fade-in">
+        <div class="glass p-10 rounded-2xl border-indigo-500/20 bg-gradient-to-b from-slate-900 to-[#0b1121]">
+            <h2 class="text-4xl md:text-5xl font-extrabold text-white mb-4 tracking-tight">
+                WELCOME TO THE <span class="text-indigo-500">WARZONE</span>
+            </h2>
+            <p class="text-slate-400 max-w-2xl mx-auto mb-8 text-lg">
+                Track your daily progress, compete with other clans, and master Data Structures & Algorithms.
+            </p>
+            <button onclick="document.getElementById('btnLoginOpen').click()" class="bg-indigo-600 hover:bg-indigo-500 text-white px-8 py-3 rounded-full font-bold shadow-[0_0_20px_rgba(99,102,241,0.5)] transition hover:scale-105">
+                ENTER THE ARENA
+            </button>
+            <div class="mt-8 flex justify-center gap-8 text-xs font-mono text-slate-500">
+                <span>⚡ 9 CLANS</span>
+                <span>🔥 DAILY UPDATES</span>
+                <span>🏆 LEADERBOARD LIVE</span>
+            </div>
+        </div>
+    </section>
+
+    <section id="superuserPanel" class="hidden max-w-7xl mx-auto px-4 py-4 w-full animate-fade-in">
+        <div class="bg-indigo-900/20 border border-indigo-500/50 p-4 rounded-lg flex justify-between items-center">
+            <div class="flex gap-4 items-center">
+                <h3 class="text-indigo-400 font-bold text-sm tracking-wider">⚡ SUPERUSER:</h3>
+                <button id="btnAddClan" class="bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded text-xs transition">+ NEW CLAN</button>
+                <button id="btnAddMember" class="bg-slate-700 hover:bg-slate-600 text-white px-3 py-1 rounded text-xs transition">+ ADD MEMBER</button>
+            </div>
+            <button id="btnSeedDatabase" class="bg-red-900/50 hover:bg-red-600 text-red-200 hover:text-white px-3 py-1 rounded text-xs border border-red-800 transition">⚠️ RESET DATABASE</button>
+        </div>
+    </section>
+
+    <section id="dashboard" class="hidden max-w-7xl mx-auto px-4 py-6 w-full animate-fade-in">
+        <div class="glass p-6 rounded-xl border border-indigo-500/30">
+            <div class="flex justify-between items-start mb-4">
+                <div>
+                    <h2 class="text-lg font-bold text-white flex items-center gap-2">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                        <span id="welcomeMsg">Welcome</span>
+                    </h2>
+                </div>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div class="space-y-3">
+                    <select id="uploadSelect" class="w-full bg-slate-900 border border-slate-700 p-3 rounded text-sm text-white outline-none"></select>
+                    <textarea id="rawInput" rows="4" class="w-full bg-slate-900 border border-slate-700 p-3 rounded text-xs font-mono text-slate-300 outline-none" placeholder="Paste update text here..."></textarea>
+                    <input type="text" id="uploadReview" placeholder="Add a note (Optional)" class="w-full bg-slate-900 border border-slate-700 p-3 rounded text-sm text-white outline-none">
+                    <button id="btnUpload" class="w-full bg-green-600 hover:bg-green-500 text-white font-bold py-3 rounded btn-hover">UPLOAD UPDATE</button>
+                </div>
+                <div class="bg-slate-900/50 p-4 rounded border border-slate-800 text-xs text-slate-400 font-mono flex flex-col justify-center">
+                    <h4 class="text-slate-200 font-bold mb-2">FORMAT GUIDE</h4>
+                    <ul class="list-disc list-inside"><li>One line with "Day X"</li><li>Format: Task Name - Link</li></ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <main class="flex-grow max-w-7xl mx-auto px-4 py-8 w-full">
+        <div id="loader" class="text-center py-20">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-500 mx-auto mb-4"></div>
+            <p class="text-slate-500 font-mono text-sm">Syncing Database...</p>
+        </div>
+        <div id="teamsContainer" class="space-y-12 hidden"></div>
+    </main>
+
+    <script type="module" src="assets/js/app.js"></script>
+
+</body>
+</html>
