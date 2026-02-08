@@ -8,9 +8,14 @@ export const firebaseConfig = {
     measurementId: "G-SLEYZ0FGQ2"
 };
 
-// Export a LIST of admins
+// Level 1: THE OWNER (Only 1 Person - YOU)
+// This person gets the "SUPER" button.
+export const OWNER_EMAIL = "skyruler3281@gmail.com"; 
+
+// Level 2: MODERATORS (List of people)
+// These people can Edit/Delete tasks, but NO Super Button.
 export const ADMIN_EMAIL = [
     "admin@clan7.com",
-    "skyruler3281@gmail.com", 
-    "admin@clan6.com" 
+    "skyruler3281@gmail.com", // You should be in both lists!
+    "admin@clan6.com"
 ];

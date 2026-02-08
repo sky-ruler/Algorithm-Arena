@@ -1,5 +1,5 @@
 import { db, auth } from './firebase-init.js';
-import { ADMIN_EMAIL } from './api-keys.js';
+import { ADMIN_EMAIL, OWNER_EMAIL } from './api-keys.js';
 import { smartParseLinks } from './utils.js';
 import { fetchClanStructure, addMemberToClan, removeMember, createNewClan, seedDatabase } from './admin.js';
 import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, arrayUnion } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
@@ -68,18 +68,33 @@ function updateUI(user) {
 
     if (user) {
         // --- LOGGED IN ---
-        // Check if the user's email is inside the list
+        
+        // 1. Check Permissions
+        // isAdmin = Can Edit/Delete Tasks (Checks the LIST)
         isAdmin = ADMIN_EMAIL.includes(user.email);
+        
+        // isOwner = Can see SUPER Button (Checks ONLY the single string)
+        const isOwner = (user.email === OWNER_EMAIL);
         
         // Hide Landing, Show Dashboard
         els.landing.classList.add('hidden');
         els.dashboard.classList.remove('hidden');
         
         // Navbar
-        els.navActions.innerHTML = `<div class="flex gap-3 items-center">${isAdmin ? '<button id="btnOpenSuper" class="text-xs bg-indigo-900 text-indigo-400 px-3 py-1 rounded">SUPER</button>' : ''}<span class="text-xs text-slate-400 hidden sm:inline">${user.email}</span><button id="btnLogout" class="text-xs text-red-400 px-3 py-1 rounded border border-red-900">LOGOUT</button></div>`;
+        // NOTICE: We now check 'isOwner' for the button, not 'isAdmin'
+        els.navActions.innerHTML = `
+            <div class="flex gap-3 items-center">
+                ${isOwner ? '<button id="btnOpenSuper" class="text-xs bg-indigo-900 text-indigo-400 px-3 py-1 rounded hover:bg-indigo-800 transition">SUPER</button>' : ''}
+                <span class="text-xs text-slate-400 hidden sm:inline">${user.email}</span>
+                <button id="btnLogout" class="text-xs text-red-400 px-3 py-1 rounded border border-red-900 hover:bg-red-900/20 transition">LOGOUT</button>
+            </div>`;
+            
         document.getElementById('btnLogout').addEventListener('click', performLogout);
         
-        if(isAdmin) document.getElementById('btnOpenSuper').addEventListener('click', () => els.superPanel.classList.toggle('hidden'));
+        // Only add listener if the button actually exists!
+        if(isOwner) {
+            document.getElementById('btnOpenSuper').addEventListener('click', () => els.superPanel.classList.toggle('hidden'));
+        }
         
         document.getElementById('welcomeMsg').innerText = `Welcome, ${user.displayName || 'Warrior'}`;
         setupUploadDropdown();
