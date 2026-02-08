@@ -11,6 +11,6 @@ export const firebaseConfig = {
 // Export a LIST of admins
 export const ADMIN_EMAILS = [
     "admin@clan7.com",
-    "ritesh.kumar@gmail.com", 
-    "co.lead@college.edu" 
+    "skyruler3281@gmail.com", 
+    "admin@clan6.com" 
 ];
