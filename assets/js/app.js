@@ -6,6 +6,7 @@ import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, arrayUnion } fr
 import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
 
 let CLAN_DATA = {}; 
+let latestStore = {}; // <--- ADD THIS LINE (Stores the data)
 let currentUser = null;
 let isAdmin = false;
 
@@ -70,18 +71,14 @@ function updateUI(user) {
         // --- LOGGED IN ---
         
         // 1. Check Permissions
-        // isAdmin = Can Edit/Delete Tasks (Checks the LIST)
         isAdmin = ADMIN_EMAIL.includes(user.email);
+        const isOwner = (user.email === OWNER_EMAIL); 
         
-        // isOwner = Can see SUPER Button (Checks ONLY the single string)
-        const isOwner = (user.email === OWNER_EMAIL);
-        
-        // Hide Landing, Show Dashboard
+        // 2. UI Updates
         els.landing.classList.add('hidden');
         els.dashboard.classList.remove('hidden');
         
-        // Navbar
-        // NOTICE: We now check 'isOwner' for the button, not 'isAdmin'
+        // 3. Navbar
         els.navActions.innerHTML = `
             <div class="flex gap-3 items-center">
                 ${isOwner ? '<button id="btnOpenSuper" class="text-xs bg-indigo-900 text-indigo-400 px-3 py-1 rounded hover:bg-indigo-800 transition">SUPER</button>' : ''}
@@ -91,25 +88,30 @@ function updateUI(user) {
             
         document.getElementById('btnLogout').addEventListener('click', performLogout);
         
-        // Only add listener if the button actually exists!
         if(isOwner) {
             document.getElementById('btnOpenSuper').addEventListener('click', () => els.superPanel.classList.toggle('hidden'));
         }
         
         document.getElementById('welcomeMsg').innerText = `Welcome, ${user.displayName || 'Warrior'}`;
         setupUploadDropdown();
+
+        // 4. *** FORCE RE-RENDER ***
+        // This is the magic line that makes the Delete buttons appear instantly!
+        renderUI(latestStore); 
+
     } else {
         // --- LOGGED OUT (VISITOR) ---
         isAdmin = false;
         
-        // Show Landing, Hide Dashboard
         els.landing.classList.remove('hidden');
         els.dashboard.classList.add('hidden');
         els.superPanel?.classList.add('hidden');
         
-        // Navbar
         els.navActions.innerHTML = `<button id="btnLoginOpen" class="bg-slate-800 text-white px-4 py-2 rounded text-xs">LOGIN</button>`;
         document.getElementById('btnLoginOpen').addEventListener('click', () => toggleModal(els.authModal, true));
+
+        // Force re-render to hide buttons if they were visible
+        renderUI(latestStore);
     }
 }
 
@@ -147,6 +149,9 @@ function loadData() {
     onSnapshot(collection(db, "submissions"), (snap) => {
         const store = {};
         snap.forEach(doc => store[doc.id] = doc.data().history || []);
+        
+        latestStore = store; // <--- ADD THIS LINE (Save data globally)
+        
         renderUI(store);
         if(els.loader) els.loader.classList.add('hidden');
         if(els.teamsContainer) els.teamsContainer.classList.remove('hidden');
