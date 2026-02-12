@@ -16,7 +16,7 @@ let latestStore = {};
 let currentUser = null;
 let REGISTERED_MEMBERS = new Set(); 
 
-// Listeners (Stored to unsubscribe later)
+// Listeners
 let unsubSubmissions = null;
 let unsubRegistry = null;
 
@@ -47,90 +47,89 @@ document.addEventListener('DOMContentLoaded', async () => {
     initTheme(); 
     setupEventListeners();
 
-    // 1. Load PUBLIC UI Config (Safe to load immediately)
+    // 🟢 PHASE 1: LOAD PUBLIC DATA IMMEDIATELY
+    // We need this for the Signup Dropdown to work for Guests
     await loadPublicConfig(); 
+    startPublicListeners(); // Start listening to User Registry
 
-    // 2. Wait for Auth before loading PRIVATE Data (Fixes "Stuck Loader")
+    // 🔒 PHASE 2: AUTHENTICATION
     onAuthStateChanged(auth, async (user) => { 
         currentUser = user; 
         
         if (user) {
             console.log("✅ Authenticated. Fetching Protected Data...");
-            updateUI(user); // Show Dashboard (Loader visible)
+            updateUI(user); 
             
-            // A. Fetch Roles & Clans FIRST (Fixes "Member" Badge issue)
+            // Fetch Roles (Protected)
             await loadProtectedConfig(); 
             
-            // B. Start Realtime Listeners (Fixes "Stuck Uplink")
-            startDataListeners();
+            // Start Submission Sync (Protected)
+            startPrivateListeners();
             
-            // C. Refresh UI with new Roles
             updateUI(user); 
         } else {
-            console.log("🔒 Signed Out. Clearing Data...");
-            stopDataListeners();
+            console.log("🔒 Signed Out.");
+            stopPrivateListeners(); // Stop syncing submissions
             updateUI(null);
         }
     });
 });
 
-// 🔓 Public Data (Titles, Texts) - No Auth Needed
+// 🔓 Public Data (UI + CLANS)
 async function loadPublicConfig() {
     try {
+        // UI Content
         const uiRef = doc(db, "system_config", "ui_content");
         const uiSnap = await getDoc(uiRef);
         if (uiSnap.exists()) { UI_CONFIG = uiSnap.data(); applyModularContent(); }
-    } catch (e) { console.error("UI Config Error:", e); }
+
+        // Clans (Now Publicly Readable)
+        CLAN_DATA = await fetchClanStructure();
+        initDropdowns(); // Populate dropdown immediately
+    } catch (e) { console.error("Public Config Error:", e); }
 }
 
-// 🔒 Protected Data (Roles, Clans) - Auth Required
+// 🔒 Protected Data (ROLES)
 async function loadProtectedConfig() {
     try {
-        // Parallel Fetch for Speed
-        const [clans, roles] = await Promise.all([
-            fetchClanStructure(),
-            fetchSystemRoles()
-        ]);
-        CLAN_DATA = clans;
-        ROLES_DATA = roles;
+        ROLES_DATA = await fetchSystemRoles();
     } catch (e) { console.error("Protected Config Error:", e); }
 }
 
-// 📡 Realtime Listeners (Submissions)
-function startDataListeners() {
-    // Stop existing listeners to prevent duplicates
-    stopDataListeners();
+// 📡 LISTENERS
 
-    // 1. Registry Listener
+function startPublicListeners() {
+    // Registry Listener (Who is signed up?) - Public Read
+    if (unsubRegistry) unsubRegistry();
     unsubRegistry = onSnapshot(collection(db, "users"), (snap) => { 
         REGISTERED_MEMBERS = new Set(); 
         snap.forEach((doc) => { 
             const d = doc.data(); 
+            // Only add if they have an email (meaning they claimed the spot)
             if (d.displayName && d.email) REGISTERED_MEMBERS.add(d.displayName); 
         }); 
-        initDropdowns(); 
+        initDropdowns(); // Refresh dropdown to filter taken names
     });
+}
 
-    // 2. Submissions Listener
+function startPrivateListeners() {
+    // Submissions Listener - Protected Read
+    if (unsubSubmissions) unsubSubmissions();
     unsubSubmissions = onSnapshot(collection(db, "submissions"), (s) => { 
         const st = {}; 
         s.forEach(d => st[d.id] = d.data().history || []); 
         latestStore = st; 
-        
-        // ✅ SUCCESS: Hide Loader
         els.loader.classList.add('hidden'); 
         els.teamsContainer.classList.remove('hidden'); 
         renderUI(st); 
     }, (error) => {
-        // ❌ ERROR: Handle Permission Denied gracefully
         console.error("Submission Sync Error:", error);
         els.loader.innerHTML = `<p class="text-red-500 font-mono text-sm">UPLINK FAILED: ${error.code}</p>`;
     });
 }
 
-function stopDataListeners() {
+function stopPrivateListeners() {
     if (unsubSubmissions) unsubSubmissions();
-    if (unsubRegistry) unsubRegistry();
 }
 
 function applyModularContent() {
@@ -146,7 +145,7 @@ function applyModularContent() {
 }
 
 // =========================================================
-// 3. UI LOGIC (Roles & Badges)
+// 3. UI LOGIC
 // =========================================================
 
 function getUserRoleLabel(email, displayName) {
@@ -159,9 +158,8 @@ function getUserRoleLabel(email, displayName) {
     // 2. General Admins
     if (ROLES_DATA.general_admins.some(e => e.toLowerCase() === lowerEmail)) return "General Admin";
     
-    // 3. Clan Chiefs (Robust Check)
+    // 3. Clan Chiefs
     if (ROLES_DATA.clan_chiefs) {
-        // Check "Clan X": "email" format
         const chiefEntry = Object.entries(ROLES_DATA.clan_chiefs).find(([clanName, chiefEmail]) => 
             chiefEmail.toLowerCase() === lowerEmail
         );
@@ -199,7 +197,7 @@ function updateUI(user) {
         if(isSuperAdmin && document.getElementById('btnOpenSuper')) document.getElementById('btnOpenSuper').addEventListener('click', () => document.getElementById('superuserPanel').classList.toggle('hidden'));
         document.getElementById('welcomeMsg').innerText = `Greetings, ${displayName}`;
         populateUploadDropdown(user, roleLabel);
-        renderUI(latestStore); // Re-render with new permissions if needed
+        renderUI(latestStore);
 
     } else {
         els.landing.classList.remove('hidden');
@@ -408,20 +406,41 @@ function setupEventListeners() {
     if(document.getElementById('superuserPanel')) { document.getElementById('btnAddClan')?.addEventListener('click', () => { const n=prompt("Name?"); if(n) createNewClan(n); }); document.getElementById('btnAddMember')?.addEventListener('click', () => { const c=prompt("Clan?"); const m=prompt("Name?"); if(c&&m) addMemberToClan(c,m); }); document.getElementById('btnSeedDatabase')?.addEventListener('click', seedDatabase); }
 }
 async function performSignup() {
-    const n = document.getElementById('signupName').value; const email = document.getElementById('signupEmail').value; const pass = document.getElementById('signupPass').value;
+    const n = document.getElementById('signupName').value; 
+    const email = document.getElementById('signupEmail').value;
+    const pass = document.getElementById('signupPass').value;
+
     if(!n || !email || !pass) return showToast("Missing Info", "error");
+
     try { 
-        const c = await createUserWithEmailAndPassword(auth, email, pass); 
-        await updateProfile(c.user, {displayName: n}); 
-        
+        // 1. Create Auth User
+        const credential = await createUserWithEmailAndPassword(auth, email, pass); 
+        await updateProfile(credential.user, {displayName: n}); 
+
+        // 2. Find the correct Clan for this user to build the ID
         let clanPrefix = "";
-        for(const [clan, members] of Object.entries(CLAN_DATA)) { if(members.includes(n)) { clanPrefix = clan; break; } }
+        for(const [clan, members] of Object.entries(CLAN_DATA)) {
+            if(members.includes(n)) {
+                clanPrefix = clan;
+                break;
+            }
+        }
+
+        // 3. Construct the ID used in the database (e.g., "Clan 7_Ritesh Kumar")
         const docId = `${clanPrefix}_${n}`;
         
+        // 4. Update the existing placeholder document instead of creating a new random one
         await setDoc(doc(db, "users", docId), {
-            displayName: n, email: credential.user.email, clan: clanPrefix, role: "Member", claimedAt: new Date().toISOString()
-        }, { merge: true });
+            displayName: n, 
+            email: credential.user.email, // Claim the account
+            clan: clanPrefix,
+            role: "Member", 
+            claimedAt: new Date().toISOString()
+        }, { merge: true }); // Merge ensures we don't overwrite existing fields if any
+
         window.location.reload(); 
-    } catch(e) { showToast(e.message, "error"); } 
+    } catch(e) { 
+        showToast(e.message, "error"); 
+    } 
 }
 function switchTab(e, mode) { document.querySelectorAll('#authModal button[id^="tab"]').forEach(b => b.className="flex-1 py-2 text-sm text-secondary hover:text-primary transition"); e.target.className="flex-1 py-2 text-sm font-bold bg-white text-black rounded-md shadow"; document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login'); document.getElementById('signupForm').classList.toggle('hidden', mode !== 'signup'); }
