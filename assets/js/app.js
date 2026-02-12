@@ -111,21 +111,31 @@ function updateUI(user) {
         // LOGGED IN
         const displayName = getSafeName(user);
         const roleLabel = getUserRoleLabel(user.email, displayName);
-        const isOwner = roleLabel.includes("Admin");
+        
+        // 🔐 SECURITY LEVELS
+        const isSuperAdmin = roleLabel === "Super Admin"; // Strictly Super Admin
+        const isAdmin = roleLabel.includes("Admin"); // Both Super & General
+        
         els.landing.classList.add('hidden');
         els.dashboard.classList.remove('hidden');
         
-        // 🛡️ FIX: Added badge-role class to prevent wrapping
+        // 🛡️ UI LOGIC: Only Super Admin gets the 'btnOpenSuper' (⚡)
         els.navActions.innerHTML = `
             <div class="flex flex-col items-end mr-4">
                 <span class="text-xs font-bold text-theme tracking-wide">${displayName}</span>
                 <span class="badge-role">${roleLabel}</span>
             </div>
-            ${isOwner ? '<button id="btnOpenSuper" class="btn btn-primary btn-sm h-9 w-9 p-0 flex items-center justify-center">⚡</button>' : ''}
+            ${isSuperAdmin ? '<button id="btnOpenSuper" class="btn btn-primary btn-sm h-9 w-9 p-0 flex items-center justify-center" title="Command Center">⚡</button>' : ''}
             <button id="btnLogout" class="btn btn-danger btn-sm h-8 text-[10px]">LOGOUT</button>
         `;
+        
         document.getElementById('btnLogout').addEventListener('click', async () => { await signOut(auth); window.location.reload(); });
-        if(isOwner && document.getElementById('btnOpenSuper')) document.getElementById('btnOpenSuper').addEventListener('click', () => document.getElementById('superuserPanel').classList.toggle('hidden'));
+        
+        // Only attach listener if the button actually exists
+        if(isSuperAdmin && document.getElementById('btnOpenSuper')) {
+            document.getElementById('btnOpenSuper').addEventListener('click', () => document.getElementById('superuserPanel').classList.toggle('hidden'));
+        }
+        
         document.getElementById('welcomeMsg').innerText = `Greetings, ${displayName}`;
         populateUploadDropdown(user, roleLabel);
         renderUI(latestStore);
@@ -134,7 +144,6 @@ function updateUI(user) {
         // LOGGED OUT
         els.landing.classList.remove('hidden');
         els.dashboard.classList.add('hidden');
-        // 🛠️ FIXED: Hardcoded "LOGIN" so it doesn't duplicate Hero text
         els.navActions.innerHTML = `<button id="btnLoginOpen" class="btn btn-primary btn-sm px-4 shadow-lg shadow-indigo-500/20">LOGIN</button>`;
         document.getElementById('btnLoginOpen').addEventListener('click', () => window.toggleModal('authModal', true));
     }
