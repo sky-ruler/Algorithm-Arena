@@ -1,44 +1,55 @@
-import { db } from './firebase-init.js';
+import { db, auth } from './firebase-init.js'; // 🛡️ Imported Auth
 import { doc, getDoc, setDoc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
 
 // ---------------------------------------------------------
-// 1. READ OPERATIONS (Fetching Data)
+// 🔒 SECURITY GATEKEEPER
+// ---------------------------------------------------------
+async function verifySuperAdmin() {
+    const user = auth.currentUser;
+    if (!user) {
+        alert("⛔ SECURITY ALERT: You are not logged in.");
+        return false;
+    }
+
+    try {
+        const docRef = doc(db, "system_config", "roles");
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            const admins = docSnap.data().super_admins || [];
+            // STRICT CHECK: Is the email in the Super Admin list?
+            if (admins.includes(user.email)) {
+                return true;
+            }
+        }
+    } catch (e) {
+        console.error("Security Check Failed:", e);
+    }
+
+    alert("⛔ ACCESS DENIED: You do not have Super Admin clearance.");
+    return false;
+}
+
+// ---------------------------------------------------------
+// 1. READ OPERATIONS (Public - Safe)
 // ---------------------------------------------------------
 
-/**
- * Fetches the Master Clan Roster from Firestore.
- * This contains the 9 Clans and all 81+ members dynamically.
- */
 export async function fetchClanStructure() {
     try {
         const docRef = doc(db, "system_config", "clans");
         const docSnap = await getDoc(docRef);
-
-        if (docSnap.exists()) {
-            return docSnap.data().structure;
-        } else {
-            console.warn("⚠️ System Config Missing. Database might be empty.");
-            return {}; 
-        }
+        return docSnap.exists() ? docSnap.data().structure : {};
     } catch (error) {
         console.error("CRITICAL: Failed to fetch clan structure.", error);
         return {};
     }
 }
 
-/**
- * Fetches the Authority Matrix (Super Admins, Chiefs).
- */
 export async function fetchSystemRoles() {
     try {
         const docRef = doc(db, "system_config", "roles");
         const docSnap = await getDoc(docRef);
-        
-        if (docSnap.exists()) {
-            return docSnap.data();
-        } else {
-            return { super_admins: [], general_admins: [], clan_chiefs: {} };
-        }
+        return docSnap.exists() ? docSnap.data() : { super_admins: [], general_admins: [], clan_chiefs: {} };
     } catch (error) {
         console.error("CRITICAL: Failed to fetch roles.", error);
         return { super_admins: [], general_admins: [], clan_chiefs: {} };
@@ -46,19 +57,14 @@ export async function fetchSystemRoles() {
 }
 
 // ---------------------------------------------------------
-// 2. WRITE OPERATIONS (Modifying the Roster)
+// 2. WRITE OPERATIONS (Restricted)
 // ---------------------------------------------------------
 
-/**
- * Adds a new member to a specific Clan.
- * AUTOMATICALLY creates a "Placeholder" identity for them to claim.
- */
-/**
- * Adds a new member to a specific Clan.
- * CORRECTED: Uses "Clan_Name" ID format so users can actually claim this spot.
- */
 export async function addMemberToClan(clanName, memberName) {
     if (!clanName || !memberName) return false;
+    
+    // Note: General Admins CAN add members, so we don't enforce Super Admin check here.
+    // Use Firestore Rules if you want to restrict this further.
     
     try {
         const docRef = doc(db, "system_config", "clans");
@@ -70,24 +76,20 @@ export async function addMemberToClan(clanName, memberName) {
             
             if (!structure[clanName].includes(memberName)) {
                 structure[clanName].push(memberName);
-                
-                // 1. Update Roster
                 await updateDoc(docRef, { structure });
                 
-                // 2. Create Claimable Placeholder (FIXED ID FORMAT)
-                // NOW matches the logic in app.js
+                // Correct ID Logic from our previous fix
                 const fixedId = `${clanName}_${memberName}`; 
-                
                 await setDoc(doc(db, "users", fixedId), {
                     displayName: memberName,
-                    email: null, // Waiting for claim
+                    email: null,
                     clan: clanName,
                     role: "Member",
                     createdAt: new Date().toISOString(),
                     isManualAdd: true
                 });
 
-                alert(`✅ ${memberName} added to ${clanName} (ID: ${fixedId})`);
+                alert(`✅ Successfully enlisted ${memberName} into ${clanName}.`);
                 return true;
             } else {
                 alert(`⚠️ ${memberName} is already in the roster.`);
@@ -100,10 +102,6 @@ export async function addMemberToClan(clanName, memberName) {
     return false;
 }
 
-/**
- * Removes a member from the Clan Roster.
- * Note: This does not delete their submission history, only their roster spot.
- */
 export async function removeMember(clanName, memberName) {
     if (!confirm(`⚠️ Are you sure you want to remove ${memberName} from ${clanName}?`)) return false;
 
@@ -113,13 +111,10 @@ export async function removeMember(clanName, memberName) {
 
         if (docSnap.exists()) {
             const structure = docSnap.data().structure;
-            
             if (structure[clanName]) {
-                // Filter out the member
                 structure[clanName] = structure[clanName].filter(m => m !== memberName);
-                
                 await updateDoc(docRef, { structure });
-                return true; // Success (Caller should reload page)
+                return true;
             }
         }
     } catch (e) {
@@ -130,9 +125,13 @@ export async function removeMember(clanName, memberName) {
 }
 
 /**
- * Creates a new, empty Clan.
+ * 🔒 SECURED: Creates a new, empty Clan.
+ * ONLY Super Admins can do this.
  */
 export async function createNewClan(clanName) {
+    // 🛡️ SECURITY CHECK
+    if (!await verifySuperAdmin()) return false;
+
     if (!clanName) return false;
 
     try {
@@ -143,7 +142,7 @@ export async function createNewClan(clanName) {
             const structure = docSnap.data().structure;
             
             if (!structure[clanName]) {
-                structure[clanName] = []; // Empty array for new clan
+                structure[clanName] = [];
                 await updateDoc(docRef, { structure });
                 return true;
             } else {
@@ -162,10 +161,13 @@ export async function createNewClan(clanName) {
 // ---------------------------------------------------------
 
 /**
- * Restores the entire database configuration from the Backup file.
- * Useful if the roster gets corrupted.
+ * 🔒 SECURED: Restores the entire database.
+ * ONLY Super Admins can do this.
  */
 export async function seedDatabase() {
+    // 🛡️ SECURITY CHECK
+    if (!await verifySuperAdmin()) return false;
+
     if (!confirm("⚠️ DANGER: This will overwrite the current Clan Roster with the Factory Backup.\n\nAre you sure?")) return;
     
     try {
@@ -173,14 +175,14 @@ export async function seedDatabase() {
         const backupSnap = await getDoc(backupRef);
         
         if (!backupSnap.exists()) {
-            alert("❌ Critical Error: No Backup found in Database. Please run the Genesis Script in Console.");
+            alert("❌ Critical Error: No Backup found in Database.");
             return;
         }
 
         const liveRef = doc(db, "system_config", "clans");
         await setDoc(liveRef, { structure: backupSnap.data().structure });
         
-        alert("✅ System Restored. The timeline has been reset.");
+        alert("✅ System Restored.");
         window.location.reload();
 
     } catch (e) {
