@@ -79,13 +79,25 @@ function getUserRoleLabel(email, displayName) {
     if (!email) return "Guest";
     const lowerEmail = email.toLowerCase();
     
-    // 🛡️ TITLE CASE FIX: No longer forcing .toUpperCase()
+    // 1. Super Admins (Checks Array)
     if (ROLES_DATA.super_admins.some(e => e.toLowerCase() === lowerEmail)) return "Super Admin";
+    
+    // 2. General Admins (Checks Array)
     if (ROLES_DATA.general_admins.some(e => e.toLowerCase() === lowerEmail)) return "General Admin";
     
-    const chiefEntry = Object.entries(ROLES_DATA.clan_chiefs).find(([k, v]) => k.toLowerCase() === lowerEmail);
-    if (chiefEntry) return `${chiefEntry[1]} Chief`; // Returns "Clan 7 Chief"
+    // 3. Clan Chiefs (UPDATED LOGIC)
+    // Old: Key was Email. New: Value is Email.
+    // We look for an entry where the VALUE matches the user's email.
+    const chiefEntry = Object.entries(ROLES_DATA.clan_chiefs).find(([clanName, chiefEmail]) => 
+        chiefEmail.toLowerCase() === lowerEmail
+    );
+
+    if (chiefEntry) {
+        // chiefEntry[0] is now "Clan 1" (The Key)
+        return `${chiefEntry[0]} Chief`; 
+    }
     
+    // 4. Member (Fallback)
     for (const [clan, members] of Object.entries(CLAN_DATA)) { 
         if (members.includes(displayName)) return `${clan} Member`; 
     }
@@ -353,5 +365,42 @@ function setupEventListeners() {
     document.getElementById('btnUpload')?.addEventListener('click', parseAndUpload);
     if(document.getElementById('superuserPanel')) { document.getElementById('btnAddClan')?.addEventListener('click', () => { const n=prompt("Name?"); if(n) createNewClan(n); }); document.getElementById('btnAddMember')?.addEventListener('click', () => { const c=prompt("Clan?"); const m=prompt("Name?"); if(c&&m) addMemberToClan(c,m); }); document.getElementById('btnSeedDatabase')?.addEventListener('click', seedDatabase); }
 }
-async function performSignup() { const n = document.getElementById('signupName').value; const email = document.getElementById('signupEmail').value; const pass = document.getElementById('signupPass').value; if(!n || !email || !pass) return showToast("Missing Info", "error"); try { const c = await createUserWithEmailAndPassword(auth, email, pass); await updateProfile(c.user, {displayName: n}); const q = query(collection(db, "users"), where("displayName", "==", n)); const check = await getDocs(q); if(!check.empty) await deleteDoc(check.docs[0].ref); await setDoc(doc(db, "users", c.user.uid), { displayName: n, email: c.user.email, role: "Member", createdAt: new Date().toISOString() }); window.location.reload(); } catch(e) { showToast(e.message, "error"); } }
+async function performSignup() {
+    const n = document.getElementById('signupName').value; 
+    const email = document.getElementById('signupEmail').value;
+    const pass = document.getElementById('signupPass').value;
+
+    if(!n || !email || !pass) return showToast("Missing Info", "error");
+
+    try { 
+        // 1. Create Auth User
+        const credential = await createUserWithEmailAndPassword(auth, email, pass); 
+        await updateProfile(credential.user, {displayName: n}); 
+
+        // 2. Find the correct Clan for this user to build the ID
+        let clanPrefix = "";
+        for(const [clan, members] of Object.entries(CLAN_DATA)) {
+            if(members.includes(n)) {
+                clanPrefix = clan;
+                break;
+            }
+        }
+
+        // 3. Construct the ID used in the database (e.g., "Clan 7_Ritesh Kumar")
+        const docId = `${clanPrefix}_${n}`;
+        
+        // 4. Update the existing placeholder document instead of creating a new random one
+        await setDoc(doc(db, "users", docId), {
+            displayName: n, 
+            email: credential.user.email, // Claim the account
+            clan: clanPrefix,
+            role: "Member", 
+            claimedAt: new Date().toISOString()
+        }, { merge: true }); // Merge ensures we don't overwrite existing fields if any
+
+        window.location.reload(); 
+    } catch(e) { 
+        showToast(e.message, "error"); 
+    } 
+}
 function switchTab(e, mode) { document.querySelectorAll('#authModal button[id^="tab"]').forEach(b => b.className="flex-1 py-2 text-sm text-secondary hover:text-primary transition"); e.target.className="flex-1 py-2 text-sm font-bold bg-white text-black rounded-md shadow"; document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login'); document.getElementById('signupForm').classList.toggle('hidden', mode !== 'signup'); }
