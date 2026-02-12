@@ -294,7 +294,9 @@ function renderUI(store) {
                 // Uses <span class="audit-name"> for extra safety (truncation enabled in CSS)
                 html += `<div class="audit-row"><strong>CREATED:</strong> <span><span class="audit-name">${postedName}</span> • ${e.createdAtIST}</span></div>`;
                 
-                if(editedName) {
+                // 🛠️ GHOST EDIT FIX: The ONLY change from base.
+                // Checks e.lastEditedAtIST instead of editedName.
+                if(e.lastEditedAtIST) {
                     html += `<div class="audit-row text-amber-500/80"><strong>EDITED:</strong> <span><span class="audit-name">${editedName}</span> • ${e.lastEditedAtIST}</span></div>`;
                 }
                 
@@ -411,12 +413,10 @@ function initTheme() {
     if(btn) {
         const current = localStorage.getItem('theme') || 'dark';
         btn.querySelector('span').innerText = current === 'dark' ? '🌑' : '☀️';
-        
         btn.addEventListener('click', () => { 
             const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; 
             document.documentElement.setAttribute('data-theme', next); 
             localStorage.setItem('theme', next);
-            // Toggle Icon
             btn.querySelector('span').innerText = next === 'dark' ? '🌑' : '☀️';
         }); 
     }
