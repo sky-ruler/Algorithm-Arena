@@ -184,13 +184,15 @@ function updateUI(user) {
         els.landing.classList.add('hidden');
         els.dashboard.classList.remove('hidden');
         
+        // 🛠️ FIX: Changed layout to flex-col (Vertical Stack) for Name/Badge
+        // This prevents the "Logout" button from being pushed off-screen
         els.navActions.innerHTML = `
-            <div class="flex flex-col items-end mr-4">
-                <span class="text-xs font-bold text-theme tracking-wide">${displayName}</span>
-                <span class="badge-role">${roleLabel}</span>
+            <div class="flex flex-col items-end mr-3 leading-tight">
+                <span class="text-[11px] font-bold text-theme tracking-wide truncate max-w-[100px]">${displayName}</span>
+                <span class="badge-role mt-0.5">${roleLabel}</span>
             </div>
-            ${isSuperAdmin ? '<button id="btnOpenSuper" class="btn btn-primary btn-sm h-9 w-9 p-0 flex items-center justify-center" title="Command Center">⚡</button>' : ''}
-            <button id="btnLogout" class="btn btn-danger btn-sm h-8 text-[10px]">LOGOUT</button>
+            ${isSuperAdmin ? '<button id="btnOpenSuper" class="btn btn-primary btn-sm h-8 w-8 p-0 flex items-center justify-center mr-2" title="Command Center">⚡</button>' : ''}
+            <button id="btnLogout" class="btn btn-danger btn-sm h-8 text-[10px] px-3">LOGOUT</button>
         `;
         
         document.getElementById('btnLogout').addEventListener('click', async () => { await signOut(auth); window.location.reload(); });
@@ -212,6 +214,9 @@ function renderUI(store) {
     const c = els.teamsContainer; if(!c) return; c.innerHTML = '';
     const sorted = Object.entries(CLAN_DATA).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }));
     
+    // Helper to get First Name only (e.g. "Ritesh Kumar" -> "Ritesh")
+    const getFirstName = (fullName) => fullName ? fullName.split(' ')[0] : 'User';
+
     let myClan = null;
     if (currentUser) {
         const displayName = getSafeName(currentUser);
@@ -278,13 +283,25 @@ function renderUI(store) {
                     if(e.review) html += `<div class="mt-2 text-xs text-secondary italic pl-2 border-l-2 border-brand-primary opacity-80">"${e.review}"</div>`;
                 }
 
+                // 🛠️ FIX: Use First Name only to prevent wrapping
+                const postedName = getFirstName(e.authorName || e.author);
+                const editedName = getFirstName(e.lastEditedByName);
+                
                 let deletedDisplay = e.deletedByName;
                 if (!deletedDisplay && e.deletedBy) deletedDisplay = e.deletedBy.split('@')[0];
 
                 html += `<div class="audit-log">`;
-                html += `<div class="audit-row"><strong>CREATED:</strong> <span>${e.authorName || 'Unknown'} • ${e.createdAtIST}</span></div>`;
-                if(e.lastEditedByName) html += `<div class="audit-row text-amber-500/80"><strong>EDITED:</strong> <span>${e.lastEditedByName} • ${e.lastEditedAtIST}</span></div>`;
-                if(e.deletedBy) html += `<div class="audit-row" style="color: #FF3B30;"><strong>DELETED:</strong> <span>${deletedDisplay || 'Admin'} • ${e.deletedAtIST || 'Unknown Time'}</span></div>`;
+                // Uses <span class="audit-name"> for extra safety (truncation enabled in CSS)
+                html += `<div class="audit-row"><strong>CREATED:</strong> <span><span class="audit-name">${postedName}</span> • ${e.createdAtIST}</span></div>`;
+                
+                if(editedName) {
+                    html += `<div class="audit-row text-amber-500/80"><strong>EDITED:</strong> <span><span class="audit-name">${editedName}</span> • ${e.lastEditedAtIST}</span></div>`;
+                }
+                
+                if(e.deletedBy) {
+                    html += `<div class="audit-row" style="color: #FF3B30;"><strong>DELETED:</strong> <span>${deletedDisplay || 'Admin'} • ${e.deletedAtIST || 'Unknown Time'}</span></div>`;
+                }
+                
                 html += `</div>`;
                 
                 r.innerHTML = html;
@@ -369,10 +386,17 @@ window.openEditModal = (member, id, day, linksEncoded, review) => {
     
     try {
         const links = JSON.parse(decodeURIComponent(linksEncoded));
+        
+        // 🛠️ GAP FIX APPLIED: .join('\n\n') adds a full empty line between items
         document.getElementById('editLinksRaw').value = links.map(x => {
-            if(x.label.includes("🔗") || x.label.includes("Problem") || x.label.includes("Video")) { return x.url; }
+            // If the label is generic/smart, just show URL to keep it clean
+            if(x.label.includes("🔗") || x.label.includes("Problem") || x.label.includes("Video")) {
+                return x.url;
+            }
+            // If it was a custom label, preserve the format "Label - URL"
             return `${x.label} - ${x.url}`;
         }).join('\n\n'); 
+        
     } catch(e) {
         document.getElementById('editLinksRaw').value = "";
     }
@@ -387,10 +411,12 @@ function initTheme() {
     if(btn) {
         const current = localStorage.getItem('theme') || 'dark';
         btn.querySelector('span').innerText = current === 'dark' ? '🌑' : '☀️';
+        
         btn.addEventListener('click', () => { 
             const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; 
             document.documentElement.setAttribute('data-theme', next); 
             localStorage.setItem('theme', next);
+            // Toggle Icon
             btn.querySelector('span').innerText = next === 'dark' ? '🌑' : '☀️';
         }); 
     }
