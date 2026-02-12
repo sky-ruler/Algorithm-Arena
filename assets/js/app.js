@@ -16,6 +16,10 @@ let latestStore = {};
 let currentUser = null;
 let REGISTERED_MEMBERS = new Set(); 
 
+// Listeners (Stored to unsubscribe later)
+let unsubSubmissions = null;
+let unsubRegistry = null;
+
 const els = {
     authModal: document.getElementById('authModal'),
     navActions: document.getElementById('navActions'),
@@ -36,26 +40,97 @@ const getSafeName = (user) => {
 };
 
 // =========================================================
-// 2. INITIALIZATION
+// 2. INITIALIZATION FLOW
 // =========================================================
 document.addEventListener('DOMContentLoaded', async () => {
     initPhysics(); 
     initTheme(); 
-    await loadSystemConfiguration(); 
-    subscribeToRegistry();
-    loadSubmissions();
     setupEventListeners();
-    onAuthStateChanged(auth, (user) => { currentUser = user; updateUI(user); });
+
+    // 1. Load PUBLIC UI Config (Safe to load immediately)
+    await loadPublicConfig(); 
+
+    // 2. Wait for Auth before loading PRIVATE Data (Fixes "Stuck Loader")
+    onAuthStateChanged(auth, async (user) => { 
+        currentUser = user; 
+        
+        if (user) {
+            console.log("✅ Authenticated. Fetching Protected Data...");
+            updateUI(user); // Show Dashboard (Loader visible)
+            
+            // A. Fetch Roles & Clans FIRST (Fixes "Member" Badge issue)
+            await loadProtectedConfig(); 
+            
+            // B. Start Realtime Listeners (Fixes "Stuck Uplink")
+            startDataListeners();
+            
+            // C. Refresh UI with new Roles
+            updateUI(user); 
+        } else {
+            console.log("🔒 Signed Out. Clearing Data...");
+            stopDataListeners();
+            updateUI(null);
+        }
+    });
 });
 
-async function loadSystemConfiguration() {
+// 🔓 Public Data (Titles, Texts) - No Auth Needed
+async function loadPublicConfig() {
     try {
         const uiRef = doc(db, "system_config", "ui_content");
         const uiSnap = await getDoc(uiRef);
         if (uiSnap.exists()) { UI_CONFIG = uiSnap.data(); applyModularContent(); }
-        CLAN_DATA = await fetchClanStructure();
-        ROLES_DATA = await fetchSystemRoles(); 
-    } catch (e) { console.error("Config Load Error:", e); }
+    } catch (e) { console.error("UI Config Error:", e); }
+}
+
+// 🔒 Protected Data (Roles, Clans) - Auth Required
+async function loadProtectedConfig() {
+    try {
+        // Parallel Fetch for Speed
+        const [clans, roles] = await Promise.all([
+            fetchClanStructure(),
+            fetchSystemRoles()
+        ]);
+        CLAN_DATA = clans;
+        ROLES_DATA = roles;
+    } catch (e) { console.error("Protected Config Error:", e); }
+}
+
+// 📡 Realtime Listeners (Submissions)
+function startDataListeners() {
+    // Stop existing listeners to prevent duplicates
+    stopDataListeners();
+
+    // 1. Registry Listener
+    unsubRegistry = onSnapshot(collection(db, "users"), (snap) => { 
+        REGISTERED_MEMBERS = new Set(); 
+        snap.forEach((doc) => { 
+            const d = doc.data(); 
+            if (d.displayName && d.email) REGISTERED_MEMBERS.add(d.displayName); 
+        }); 
+        initDropdowns(); 
+    });
+
+    // 2. Submissions Listener
+    unsubSubmissions = onSnapshot(collection(db, "submissions"), (s) => { 
+        const st = {}; 
+        s.forEach(d => st[d.id] = d.data().history || []); 
+        latestStore = st; 
+        
+        // ✅ SUCCESS: Hide Loader
+        els.loader.classList.add('hidden'); 
+        els.teamsContainer.classList.remove('hidden'); 
+        renderUI(st); 
+    }, (error) => {
+        // ❌ ERROR: Handle Permission Denied gracefully
+        console.error("Submission Sync Error:", error);
+        els.loader.innerHTML = `<p class="text-red-500 font-mono text-sm">UPLINK FAILED: ${error.code}</p>`;
+    });
+}
+
+function stopDataListeners() {
+    if (unsubSubmissions) unsubSubmissions();
+    if (unsubRegistry) unsubRegistry();
 }
 
 function applyModularContent() {
@@ -65,39 +140,35 @@ function applyModularContent() {
     const navS = document.getElementById('navSubtitle'); if(navS) navS.innerText = UI_CONFIG.appSubtitle || "Arena";
     const heroH = document.getElementById('heroHeadline'); if(heroH) heroH.innerHTML = UI_CONFIG.heroHeadline || "WELCOME";
     const heroSub = document.getElementById('heroSubtext'); if(heroSub) heroSub.innerText = UI_CONFIG.heroSubtext || "";
-    // Only set HERO button text here, NOT Navbar
     const loginBtn = document.getElementById('heroLoginBtn'); if(loginBtn) loginBtn.innerText = UI_CONFIG.loginBtnText || "ENTER";
     const badgesContainer = document.getElementById('heroBadges'); if(badgesContainer && UI_CONFIG.badges) badgesContainer.innerHTML = UI_CONFIG.badges.map(b => `<span>${b}</span>`).join('');
     const guide = document.getElementById('formatGuideList'); if(guide && UI_CONFIG.formatGuide) guide.innerHTML = UI_CONFIG.formatGuide.map(g => `<li class="flex items-center gap-3"><span class="text-emerald-500">✓</span> ${g}</li>`).join('');
 }
 
 // =========================================================
-// 3. UI LOGIC (Fixed Username Color & Icon)
+// 3. UI LOGIC (Roles & Badges)
 // =========================================================
 
 function getUserRoleLabel(email, displayName) {
     if (!email) return "Guest";
     const lowerEmail = email.toLowerCase();
     
-    // 1. Super Admins (Checks Array)
+    // 1. Super Admins
     if (ROLES_DATA.super_admins.some(e => e.toLowerCase() === lowerEmail)) return "Super Admin";
     
-    // 2. General Admins (Checks Array)
+    // 2. General Admins
     if (ROLES_DATA.general_admins.some(e => e.toLowerCase() === lowerEmail)) return "General Admin";
     
-    // 3. Clan Chiefs (UPDATED LOGIC)
-    // Old: Key was Email. New: Value is Email.
-    // We look for an entry where the VALUE matches the user's email.
-    const chiefEntry = Object.entries(ROLES_DATA.clan_chiefs).find(([clanName, chiefEmail]) => 
-        chiefEmail.toLowerCase() === lowerEmail
-    );
-
-    if (chiefEntry) {
-        // chiefEntry[0] is now "Clan 1" (The Key)
-        return `${chiefEntry[0]} Chief`; 
+    // 3. Clan Chiefs (Robust Check)
+    if (ROLES_DATA.clan_chiefs) {
+        // Check "Clan X": "email" format
+        const chiefEntry = Object.entries(ROLES_DATA.clan_chiefs).find(([clanName, chiefEmail]) => 
+            chiefEmail.toLowerCase() === lowerEmail
+        );
+        if (chiefEntry) return `${chiefEntry[0]} Chief`;
     }
     
-    // 4. Member (Fallback)
+    // 4. Member
     for (const [clan, members] of Object.entries(CLAN_DATA)) { 
         if (members.includes(displayName)) return `${clan} Member`; 
     }
@@ -108,18 +179,13 @@ function updateUI(user) {
     if (!els.navActions) return;
     
     if (user) {
-        // LOGGED IN
         const displayName = getSafeName(user);
         const roleLabel = getUserRoleLabel(user.email, displayName);
-        
-        // 🔐 SECURITY LEVELS
-        const isSuperAdmin = roleLabel === "Super Admin"; // Strictly Super Admin
-        const isAdmin = roleLabel.includes("Admin"); // Both Super & General
+        const isSuperAdmin = roleLabel === "Super Admin";
         
         els.landing.classList.add('hidden');
         els.dashboard.classList.remove('hidden');
         
-        // 🛡️ UI LOGIC: Only Super Admin gets the 'btnOpenSuper' (⚡)
         els.navActions.innerHTML = `
             <div class="flex flex-col items-end mr-4">
                 <span class="text-xs font-bold text-theme tracking-wide">${displayName}</span>
@@ -130,18 +196,12 @@ function updateUI(user) {
         `;
         
         document.getElementById('btnLogout').addEventListener('click', async () => { await signOut(auth); window.location.reload(); });
-        
-        // Only attach listener if the button actually exists
-        if(isSuperAdmin && document.getElementById('btnOpenSuper')) {
-            document.getElementById('btnOpenSuper').addEventListener('click', () => document.getElementById('superuserPanel').classList.toggle('hidden'));
-        }
-        
+        if(isSuperAdmin && document.getElementById('btnOpenSuper')) document.getElementById('btnOpenSuper').addEventListener('click', () => document.getElementById('superuserPanel').classList.toggle('hidden'));
         document.getElementById('welcomeMsg').innerText = `Greetings, ${displayName}`;
         populateUploadDropdown(user, roleLabel);
-        renderUI(latestStore);
+        renderUI(latestStore); // Re-render with new permissions if needed
 
     } else {
-        // LOGGED OUT
         els.landing.classList.remove('hidden');
         els.dashboard.classList.add('hidden');
         els.navActions.innerHTML = `<button id="btnLoginOpen" class="btn btn-primary btn-sm px-4 shadow-lg shadow-indigo-500/20">LOGIN</button>`;
@@ -150,7 +210,6 @@ function updateUI(user) {
 }
 
 // 🛠️ RENDER ENGINE
-// 🛠️ RENDER ENGINE (Fixed Deletion Log Visibility)
 function renderUI(store) {
     const c = els.teamsContainer; if(!c) return; c.innerHTML = '';
     const sorted = Object.entries(CLAN_DATA).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' }));
@@ -221,26 +280,13 @@ function renderUI(store) {
                     if(e.review) html += `<div class="mt-2 text-xs text-secondary italic pl-2 border-l-2 border-brand-primary opacity-80">"${e.review}"</div>`;
                 }
 
-                // 🕵️ AUDIT LOG LOGIC (Fixed)
-                const posted = e.authorName || e.author || "Unknown";
-                const edited = e.lastEditedByName;
-                
-                // Fallback Logic for Deletion Info
                 let deletedDisplay = e.deletedByName;
-                if (!deletedDisplay && e.deletedBy) deletedDisplay = e.deletedBy.split('@')[0]; // Use email prefix if name missing
+                if (!deletedDisplay && e.deletedBy) deletedDisplay = e.deletedBy.split('@')[0];
 
                 html += `<div class="audit-log">`;
-                html += `<div class="audit-row"><strong>CREATED:</strong> <span>${posted} • ${e.createdAtIST}</span></div>`;
-                
-                if(edited) {
-                    html += `<div class="audit-row text-amber-500/80"><strong>EDITED:</strong> <span>${edited} • ${e.lastEditedAtIST}</span></div>`;
-                }
-                
-                // CRITICAL FIX: Check if deletedBy exists (truthy), then show row
-                if(e.deletedBy) {
-                    html += `<div class="audit-row" style="color: #FF3B30;"><strong>DELETED:</strong> <span>${deletedDisplay || 'Admin'} • ${e.deletedAtIST || 'Unknown Time'}</span></div>`;
-                }
-                
+                html += `<div class="audit-row"><strong>CREATED:</strong> <span>${e.authorName || 'Unknown'} • ${e.createdAtIST}</span></div>`;
+                if(e.lastEditedByName) html += `<div class="audit-row text-amber-500/80"><strong>EDITED:</strong> <span>${e.lastEditedByName} • ${e.lastEditedAtIST}</span></div>`;
+                if(e.deletedBy) html += `<div class="audit-row" style="color: #FF3B30;"><strong>DELETED:</strong> <span>${deletedDisplay || 'Admin'} • ${e.deletedAtIST || 'Unknown Time'}</span></div>`;
                 html += `</div>`;
                 
                 r.innerHTML = html;
@@ -325,17 +371,10 @@ window.openEditModal = (member, id, day, linksEncoded, review) => {
     
     try {
         const links = JSON.parse(decodeURIComponent(linksEncoded));
-        
-        // 🛠️ GAP FIX APPLIED: .join('\n\n') adds a full empty line between items
         document.getElementById('editLinksRaw').value = links.map(x => {
-            // If the label is generic/smart, just show URL to keep it clean
-            if(x.label.includes("🔗") || x.label.includes("Problem") || x.label.includes("Video")) {
-                return x.url;
-            }
-            // If it was a custom label, preserve the format "Label - URL"
+            if(x.label.includes("🔗") || x.label.includes("Problem") || x.label.includes("Video")) { return x.url; }
             return `${x.label} - ${x.url}`;
         }).join('\n\n'); 
-        
     } catch(e) {
         document.getElementById('editLinksRaw').value = "";
     }
@@ -345,27 +384,21 @@ window.openEditModal = (member, id, day, linksEncoded, review) => {
 
 function initPhysics() { const canvas = document.getElementById('cosmos-canvas'); if(!canvas) return; const ctx = canvas.getContext('2d'); let stars = []; const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }; window.addEventListener('resize', resize); resize(); class Star { constructor() { this.reset(); } reset() { this.x = Math.random() * canvas.width; this.y = Math.random() * canvas.height; this.z = Math.random() * 2; this.o = Math.random(); } update() { this.y -= 0.5; if(this.y < 0) this.reset(); this.o = Math.random(); } draw() { ctx.fillStyle = `rgba(255,255,255,${this.o})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.z, 0, Math.PI*2); ctx.fill(); } } stars = Array.from({ length: 150 }, () => new Star()); const loop = () => { ctx.clearRect(0,0,canvas.width,canvas.height); stars.forEach(s => {s.update(); s.draw();}); requestAnimationFrame(loop); }; loop(); }
 
-// 🌗 THEME ICON TOGGLE FIX
 function initTheme() { 
     const btn = document.getElementById('themeToggle'); 
     if(btn) {
-        // Set initial icon
         const current = localStorage.getItem('theme') || 'dark';
         btn.querySelector('span').innerText = current === 'dark' ? '🌑' : '☀️';
-        
         btn.addEventListener('click', () => { 
             const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark'; 
             document.documentElement.setAttribute('data-theme', next); 
             localStorage.setItem('theme', next);
-            // Toggle Icon
             btn.querySelector('span').innerText = next === 'dark' ? '🌑' : '☀️';
         }); 
     }
 }
 
-function subscribeToRegistry() { onSnapshot(collection(db, "users"), (snap) => { REGISTERED_MEMBERS = new Set(); snap.forEach((doc) => { const d = doc.data(); if (d.displayName && d.email) REGISTERED_MEMBERS.add(d.displayName); }); initDropdowns(); }); }
 function initDropdowns() { const s = document.getElementById('signupName'); if(s) { s.innerHTML = '<option value="">-- Select Identity --</option>'; for(const [t,m] of Object.entries(CLAN_DATA).sort()) { const g = document.createElement('optgroup'); g.label = t; let has = false; m.forEach(x => { if (!x.includes("Chief") && !REGISTERED_MEMBERS.has(x)) { g.appendChild(new Option(x, x)); has = true; } }); if (has) s.appendChild(g); } } }
-function loadSubmissions() { onSnapshot(collection(db, "submissions"), (s) => { const st = {}; s.forEach(d => st[d.id] = d.data().history || []); latestStore = st; els.loader.classList.add('hidden'); els.teamsContainer.classList.remove('hidden'); renderUI(st); }); }
 function setupEventListeners() {
     document.getElementById('tabLogin')?.addEventListener('click', (e) => switchTab(e, 'login'));
     document.getElementById('tabSignup')?.addEventListener('click', (e) => switchTab(e, 'signup'));
@@ -375,41 +408,20 @@ function setupEventListeners() {
     if(document.getElementById('superuserPanel')) { document.getElementById('btnAddClan')?.addEventListener('click', () => { const n=prompt("Name?"); if(n) createNewClan(n); }); document.getElementById('btnAddMember')?.addEventListener('click', () => { const c=prompt("Clan?"); const m=prompt("Name?"); if(c&&m) addMemberToClan(c,m); }); document.getElementById('btnSeedDatabase')?.addEventListener('click', seedDatabase); }
 }
 async function performSignup() {
-    const n = document.getElementById('signupName').value; 
-    const email = document.getElementById('signupEmail').value;
-    const pass = document.getElementById('signupPass').value;
-
+    const n = document.getElementById('signupName').value; const email = document.getElementById('signupEmail').value; const pass = document.getElementById('signupPass').value;
     if(!n || !email || !pass) return showToast("Missing Info", "error");
-
     try { 
-        // 1. Create Auth User
-        const credential = await createUserWithEmailAndPassword(auth, email, pass); 
-        await updateProfile(credential.user, {displayName: n}); 
-
-        // 2. Find the correct Clan for this user to build the ID
+        const c = await createUserWithEmailAndPassword(auth, email, pass); 
+        await updateProfile(c.user, {displayName: n}); 
+        
         let clanPrefix = "";
-        for(const [clan, members] of Object.entries(CLAN_DATA)) {
-            if(members.includes(n)) {
-                clanPrefix = clan;
-                break;
-            }
-        }
-
-        // 3. Construct the ID used in the database (e.g., "Clan 7_Ritesh Kumar")
+        for(const [clan, members] of Object.entries(CLAN_DATA)) { if(members.includes(n)) { clanPrefix = clan; break; } }
         const docId = `${clanPrefix}_${n}`;
         
-        // 4. Update the existing placeholder document instead of creating a new random one
         await setDoc(doc(db, "users", docId), {
-            displayName: n, 
-            email: credential.user.email, // Claim the account
-            clan: clanPrefix,
-            role: "Member", 
-            claimedAt: new Date().toISOString()
-        }, { merge: true }); // Merge ensures we don't overwrite existing fields if any
-
+            displayName: n, email: credential.user.email, clan: clanPrefix, role: "Member", claimedAt: new Date().toISOString()
+        }, { merge: true });
         window.location.reload(); 
-    } catch(e) { 
-        showToast(e.message, "error"); 
-    } 
+    } catch(e) { showToast(e.message, "error"); } 
 }
 function switchTab(e, mode) { document.querySelectorAll('#authModal button[id^="tab"]').forEach(b => b.className="flex-1 py-2 text-sm text-secondary hover:text-primary transition"); e.target.className="flex-1 py-2 text-sm font-bold bg-white text-black rounded-md shadow"; document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login'); document.getElementById('signupForm').classList.toggle('hidden', mode !== 'signup'); }
