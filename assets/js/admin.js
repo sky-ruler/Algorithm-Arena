@@ -1,83 +1,188 @@
 import { db } from './firebase-init.js';
-import { doc, getDoc, setDoc, updateDoc, runTransaction } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+import { doc, getDoc, setDoc, updateDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
 
-// --- THE DATA TO SEED ---
-const STARTER_DATA = {
-    "Clan 1": ["Nishant Kumar", "Nirakar Patel", "Piyush Kumar", "Omm Prakash Rout", "Jiru Pranita Krishna Reddy", "Kriti Sreyasha Parida", "Shobhini Upadhyay", "Shreya Patel", "Akash Pattnaik"],
-    "Clan 2": ["G Jaganmohan Achary", "Jitesh Choudhury", "Rajshree Balsamant", "Anish Sahoo", "Subh Ranjan Mishra", "Rounak Kumar Mahato", "Rashmi Anand", "Sashwat Mishra", "Sahil Saha"],
-    "Clan 3": ["Mrinall Samal", "Asmit Gupta", "K.Rohan Achary", "Mandeep Ray", "Riddhima Singh", "Vivek Kumar", "Shradha Shrivastava", "Nikhil Kumar", "Sritam Das"],
-    "Clan 4": ["Ahana De", "Amaresh Swain", "Sayak Mondal", "Kalyan Jyoti Mishra", "Sanyukt Kumar Rai", "Chitreshwar Choudhury", "Priyanka Rath", "Rohit Kumar", "Aastha Singh"],
-    "Clan 5": ["Ankita Mohapatra", "Riya Patnaik", "Nandita Sahoo", "Yash Agrawal", "Soham Banerjee", "Renesha Goswami", "Rishav Singh", "Siddhant Satyajeet Jena", "Miraj Patra"],
-    "Clan 6": ["Arman Panda", "Ayush Kumar Singh", "Sanket Nayak", "Rajanyak Das", "Ayan Bhattacharjee", "Sneha Maurya", "Bharat Bhusan Mohanta", "Jitesh Mohanty", "Aslesha Brahma"],
-    "Clan 7": ["Ritesh Kumar", "Amrit Arya", "Priyanshu Chandra", "Nandish Sinha", "Sukanya Beuria", "Swayansh Prusty", "Debasis Das", "Nandini Mishra", "Harsh Kumar"],
-    "Clan 8": ["Srideep Kundu", "Sampriti Biswas", "Manya Bhardwaj", "Ashutosh Padhi", "Arpit Kumar Maurya", "Atharv Sunil Patole", "Abdul Naved Ul Haq", "Anil Kumar Jena", "Anshuman Nayak"],
-    "Clan 9": ["Mili Gupta", "Barsha Pradhan", "Jayita Mondal", "Subham Pattnaik", "Tanisha Dash", "Partho Prateem Satapathy", "Debayan Kar", "Waiz Alam", "Sushruta Kar"]
-};
+// ---------------------------------------------------------
+// 1. READ OPERATIONS (Fetching Data)
+// ---------------------------------------------------------
 
-// 1. SEED FUNCTION (Run this via Button)
-export async function seedDatabase() {
-    if(!confirm("⚠️ This will overwrite the CLAN LIST in the database. Continue?")) return;
-    
-    try {
-        await setDoc(doc(db, "settings", "clanConfig"), { clans: STARTER_DATA }, { merge: true });
-        alert("✅ SUCCESS: Database has been seeded! Refreshing page...");
-        window.location.reload();
-    } catch (e) {
-        console.error("Seeding Error:", e);
-        alert("Error: " + e.message);
-    }
-}
-
-// 2. FETCH
+/**
+ * Fetches the Master Clan Roster from Firestore.
+ * This contains the 9 Clans and all 81+ members dynamically.
+ */
 export async function fetchClanStructure() {
     try {
-        const docRef = doc(db, "settings", "clanConfig");
-        const snap = await getDoc(docRef);
-        return snap.exists() ? (snap.data().clans || {}) : {};
-    } catch (e) {
-        console.error("Fetch Error:", e);
+        const docRef = doc(db, "system_config", "clans");
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            return docSnap.data().structure;
+        } else {
+            console.warn("⚠️ System Config Missing. Database might be empty.");
+            return {}; 
+        }
+    } catch (error) {
+        console.error("CRITICAL: Failed to fetch clan structure.", error);
         return {};
     }
 }
 
-// 3. EDIT FUNCTIONS
+/**
+ * Fetches the Authority Matrix (Super Admins, Chiefs).
+ */
+export async function fetchSystemRoles() {
+    try {
+        const docRef = doc(db, "system_config", "roles");
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            return docSnap.data();
+        } else {
+            return { super_admins: [], general_admins: [], clan_chiefs: {} };
+        }
+    } catch (error) {
+        console.error("CRITICAL: Failed to fetch roles.", error);
+        return { super_admins: [], general_admins: [], clan_chiefs: {} };
+    }
+}
+
+// ---------------------------------------------------------
+// 2. WRITE OPERATIONS (Modifying the Roster)
+// ---------------------------------------------------------
+
+/**
+ * Adds a new member to a specific Clan.
+ * AUTOMATICALLY creates a "Placeholder" identity for them to claim.
+ */
 export async function addMemberToClan(clanName, memberName) {
     if (!clanName || !memberName) return false;
-    const docRef = doc(db, "settings", "clanConfig");
+    
     try {
-        await runTransaction(db, async (t) => {
-            const docSnap = await t.get(docRef);
-            if (!docSnap.exists()) throw "Config missing";
-            const structure = docSnap.data().clans || {};
+        const docRef = doc(db, "system_config", "clans");
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            const structure = docSnap.data().structure;
+            
+            // Initialize clan if it doesn't exist
             if (!structure[clanName]) structure[clanName] = [];
+            
+            // Prevent duplicates in the visual list
             if (!structure[clanName].includes(memberName)) {
                 structure[clanName].push(memberName);
-                t.update(docRef, { clans: structure });
+                
+                // 1. Update the Roster List
+                await updateDoc(docRef, { structure });
+                
+                // 2. Create the "Claimable" Placeholder
+                // We use a timestamp ID to ensure uniqueness for new adds
+                const placeholderId = `manual_add_${Date.now()}`;
+                await setDoc(doc(db, "users", placeholderId), {
+                    displayName: memberName,
+                    email: null, // <--- Null email means "Available to Claim"
+                    clan: clanName,
+                    role: "Member",
+                    createdAt: new Date().toISOString(),
+                    isManualAdd: true
+                });
+
+                alert(`✅ Successfully enlisted ${memberName} into ${clanName}.`);
+                return true;
+            } else {
+                alert(`⚠️ ${memberName} is already in the roster.`);
             }
-        });
-        return true;
-    } catch(e) { console.error(e); return false; }
+        }
+    } catch (e) {
+        console.error("Add Member Error:", e);
+        alert("Operation Failed: " + e.message);
+    }
+    return false;
 }
 
+/**
+ * Removes a member from the Clan Roster.
+ * Note: This does not delete their submission history, only their roster spot.
+ */
 export async function removeMember(clanName, memberName) {
-    if (!confirm(`Remove ${memberName}?`)) return false;
-    const docRef = doc(db, "settings", "clanConfig");
+    if (!confirm(`⚠️ Are you sure you want to remove ${memberName} from ${clanName}?`)) return false;
+
     try {
-        await runTransaction(db, async (t) => {
-            const docSnap = await t.get(docRef);
-            const structure = docSnap.data().clans || {};
+        const docRef = doc(db, "system_config", "clans");
+        const docSnap = await getDoc(docRef);
+
+        if (docSnap.exists()) {
+            const structure = docSnap.data().structure;
+            
             if (structure[clanName]) {
+                // Filter out the member
                 structure[clanName] = structure[clanName].filter(m => m !== memberName);
-                if (structure[clanName].length === 0) delete structure[clanName];
-                t.update(docRef, { clans: structure });
+                
+                await updateDoc(docRef, { structure });
+                return true; // Success (Caller should reload page)
             }
-        });
-        return true;
-    } catch(e) { console.error(e); return false; }
+        }
+    } catch (e) {
+        console.error("Remove Member Error:", e);
+        alert("Operation Failed: " + e.message);
+    }
+    return false;
 }
 
+/**
+ * Creates a new, empty Clan.
+ */
 export async function createNewClan(clanName) {
-    const docRef = doc(db, "settings", "clanConfig");
-    await setDoc(docRef, { clans: { [clanName]: [] } }, { merge: true });
-    return true;
+    if (!clanName) return false;
+
+    try {
+        const docRef = doc(db, "system_config", "clans");
+        const docSnap = await getDoc(docRef);
+        
+        if (docSnap.exists()) {
+            const structure = docSnap.data().structure;
+            
+            if (!structure[clanName]) {
+                structure[clanName] = []; // Empty array for new clan
+                await updateDoc(docRef, { structure });
+                return true;
+            } else {
+                alert("Clan already exists!");
+            }
+        }
+    } catch (e) {
+        console.error("Create Clan Error:", e);
+        alert("Operation Failed: " + e.message);
+    }
+    return false;
+}
+
+// ---------------------------------------------------------
+// 3. RECOVERY (Disaster Management)
+// ---------------------------------------------------------
+
+/**
+ * Restores the entire database configuration from the Backup file.
+ * Useful if the roster gets corrupted.
+ */
+export async function seedDatabase() {
+    if (!confirm("⚠️ DANGER: This will overwrite the current Clan Roster with the Factory Backup.\n\nAre you sure?")) return;
+    
+    try {
+        const backupRef = doc(db, "system_config", "backup_structure");
+        const backupSnap = await getDoc(backupRef);
+        
+        if (!backupSnap.exists()) {
+            alert("❌ Critical Error: No Backup found in Database. Please run the Genesis Script in Console.");
+            return;
+        }
+
+        const liveRef = doc(db, "system_config", "clans");
+        await setDoc(liveRef, { structure: backupSnap.data().structure });
+        
+        alert("✅ System Restored. The timeline has been reset.");
+        window.location.reload();
+
+    } catch (e) {
+        console.error("Reset Error:", e);
+        alert("Reset Failed. Check console for details.");
+    }
 }

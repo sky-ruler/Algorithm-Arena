@@ -1,223 +1,402 @@
 import { db, auth } from './firebase-init.js';
-import { OWNER_EMAIL, GENERAL_ADMINS, CLAN_CAPTAINS } from './api-keys.js';
 import { smartParseLinks } from './utils.js';
-import { fetchClanStructure, addMemberToClan, removeMember, createNewClan, seedDatabase } from './admin.js';
-import { collection, onSnapshot, doc, getDoc, setDoc, updateDoc, arrayUnion } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
-import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
+import { fetchClanStructure, fetchSystemRoles, addMemberToClan, removeMember, createNewClan, seedDatabase } from './admin.js';
+import { collection, onSnapshot, doc, getDoc, getDocs, setDoc, updateDoc, arrayUnion, query, where, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js';
+import { onAuthStateChanged, signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile, signOut, deleteUser } from 'https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js';
 
-// --- GLOBAL STATE ---
+console.log("🚀 Warzone System: Online");
+
+// =========================================================
+// 1. GLOBAL STATE & UTILS
+// =========================================================
 let CLAN_DATA = {}; 
+let ROLES_DATA = { super_admins: [], general_admins: [], clan_chiefs: {} };
 let latestStore = {}; 
 let currentUser = null;
-let isAdmin = false; // Used ONLY for UI buttons (Delete/Edit), NOT for Dropdown logic
+let REGISTERED_MEMBERS = new Set(); 
 
 const els = {
     authModal: document.getElementById('authModal'),
-    editModal: document.getElementById('editModal'),
-    landing: document.getElementById('landing'),
-    superPanel: document.getElementById('superuserPanel'),
     navActions: document.getElementById('navActions'),
+    landing: document.getElementById('landing'),
     dashboard: document.getElementById('dashboard'),
     teamsContainer: document.getElementById('teamsContainer'),
     loader: document.getElementById('loader'),
-    uploadSelect: document.getElementById('uploadSelect')
+    uploadSelect: document.getElementById('uploadSelect'),
+    navbar: document.querySelector('nav')
 };
 
-document.addEventListener('DOMContentLoaded', async () => {
-    console.log("🚀 System Online | VERSION: 3.0 FIXED"); // Look for this in Console!
+// 🕒 PRECISE TIMEKEEPING (IST)
+const getIST = () => {
+    return new Date().toLocaleString('en-IN', { 
+        timeZone: 'Asia/Kolkata', 
+        day: '2-digit', month: 'short', year: 'numeric', 
+        hour: '2-digit', minute: '2-digit', hour12: true 
+    }).toUpperCase();
+};
+
+// 🛡️ NAME RESOLVER (Fixes missing names)
+const getSafeName = (user) => {
+    if (!user) return "Unknown";
+    // Priority: Display Name -> Email Prefix -> "Commander"
+    if (user.displayName) return user.displayName;
+    if (user.email) return user.email.split('@')[0].charAt(0).toUpperCase() + user.email.split('@')[0].slice(1);
+    return "Commander";
+};
+
+// =========================================================
+// 2. GLOBAL HANDLERS (EXPOSED TO WINDOW)
+// =========================================================
+
+window.toggleModal = (id, show) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    if (show) { el.classList.remove('hidden'); setTimeout(() => el.classList.add('active'), 10); } 
+    else { el.classList.remove('active'); setTimeout(() => el.classList.add('hidden'), 300); }
+};
+
+window.saveEdit = async () => {
+    await handleSaveEdit();
+};
+
+window.removeMemberGlobal = async (c, m) => { 
+    if(await removeMember(c, m)) window.location.reload(); 
+};
+
+window.deleteSubmissionGlobal = async (m, id) => {
+    await handleDeleteSubmission(m, id);
+};
+
+window.openEditModal = (member, id, day, linksEncoded, review) => {
+    // Populate fields
+    document.getElementById('editMemberName').value = member;
+    document.getElementById('editTimestamp').value = id;
+    document.getElementById('editDay').value = day;
+    document.getElementById('editReview').value = review;
     
-    // 1. ALWAYS LOAD DATA
-    CLAN_DATA = await fetchClanStructure();
-    initDropdowns();
-    loadData(); 
+    // Decode Links
+    try {
+        const links = JSON.parse(decodeURIComponent(linksEncoded));
+        document.getElementById('editLinksRaw').value = links.map(x => x.url).join('\n');
+    } catch(e) {
+        document.getElementById('editLinksRaw').value = "";
+    }
+    
+    window.toggleModal('editModal', true);
+};
+
+
+// =========================================================
+// 3. MAIN LOGIC & LISTENERS
+// =========================================================
+
+document.addEventListener('DOMContentLoaded', async () => {
+    initPhysics(); 
+    initTheme(); 
+    
+    try {
+        CLAN_DATA = await fetchClanStructure();
+        ROLES_DATA = await fetchSystemRoles(); 
+    } catch (e) {
+        console.warn("⚠️ Config Load Error:", e);
+    }
+    
+    subscribeToRegistry();
+    loadSubmissions();
     setupEventListeners();
     
-    // 2. CHECK AUTH
-    onAuthStateChanged(auth, (user) => {
-        currentUser = user;
-        updateUI(user);
+    onAuthStateChanged(auth, (user) => { 
+        currentUser = user; 
+        updateUI(user); 
     });
 });
 
-function setupEventListeners() {
-    // Auth Triggers
-    document.getElementById('btnLoginOpen')?.addEventListener('click', () => toggleModal(els.authModal, true));
-    document.querySelector('#authModal button.absolute')?.addEventListener('click', () => toggleModal(els.authModal, false));
-    document.getElementById('tabLogin')?.addEventListener('click', () => switchAuthTab('login'));
-    document.getElementById('tabSignup')?.addEventListener('click', () => switchAuthTab('signup'));
+function getUserRoleLabel(email, displayName) {
+    if (!email) return "Guest";
+    const lowerEmail = email.toLowerCase();
     
-    // Core Actions
-    document.querySelector('#loginForm button')?.addEventListener('click', performLogin);
-    document.querySelector('#signupForm button')?.addEventListener('click', performSignup);
-    document.getElementById('btnUpload')?.addEventListener('click', parseAndUpload);
-    document.querySelector('#editModal button.bg-indigo-600')?.addEventListener('click', saveEdit);
-    document.querySelector('#editModal button.text-slate-400')?.addEventListener('click', () => toggleModal(els.editModal, false));
-
-    // Superuser Panel
-    if(els.superPanel) {
-        document.getElementById('btnAddClan')?.addEventListener('click', handleAddClan);
-        document.getElementById('btnAddMember')?.addEventListener('click', handleAddMember);
-        document.getElementById('btnSeedDatabase')?.addEventListener('click', seedDatabase);
+    if (ROLES_DATA.super_admins.some(e => e.toLowerCase() === lowerEmail)) return "SUPER ADMIN";
+    if (ROLES_DATA.general_admins.some(e => e.toLowerCase() === lowerEmail)) return "GENERAL ADMIN";
+    
+    const chiefEntry = Object.entries(ROLES_DATA.clan_chiefs).find(([k, v]) => k.toLowerCase() === lowerEmail);
+    if (chiefEntry) return `${chiefEntry[1].toUpperCase()} CHIEF`;
+    
+    for (const [clan, members] of Object.entries(CLAN_DATA)) {
+        if (members.includes(displayName)) return `${clan.toUpperCase()} MEMBER`;
     }
+    return "MEMBER";
 }
-
-// ==========================================
-// 🛡️ AUTH & UI LOGIC
-// ==========================================
 
 function updateUI(user) {
     if (!els.navActions) return;
-
+    
     if (user) {
-        // --- LOGGED IN ---
-        const email = user.email.toLowerCase(); // Force lowercase for safety
+        const email = user.email.toLowerCase();
+        const displayName = getSafeName(user);
+        const roleLabel = getUserRoleLabel(email, displayName);
+        const isOwner = roleLabel === "SUPER ADMIN";
         
-        // 1. CALCULATE PERMISSIONS
-        const isOwner = (email === OWNER_EMAIL.toLowerCase());
-        const isGeneral = GENERAL_ADMINS.some(admin => admin.toLowerCase() === email);
-        const managedClan = CLAN_CAPTAINS[email]; // Check specific clan map
+        if (els.landing) els.landing.classList.add('hidden');
+        if (els.dashboard) els.dashboard.classList.remove('hidden');
         
-        // "isAdmin" controls DELETE/EDIT buttons. 
-        // Everyone in the hierarchy gets this, but Dropdown logic is separate!
-        isAdmin = isOwner || isGeneral || !!managedClan;
-
-        // 2. UI Updates
-        els.landing.classList.add('hidden');
-        els.dashboard.classList.remove('hidden');
-        
-        // 3. Build Navbar
-        let roleBadge = '';
-        if (isOwner) roleBadge = '<span class="text-[10px] bg-indigo-900 text-indigo-300 px-2 py-1 rounded border border-indigo-500">OWNER</span>';
-        else if (isGeneral) roleBadge = '<span class="text-[10px] bg-purple-900 text-purple-300 px-2 py-1 rounded border border-purple-500">GENERAL</span>';
-        else if (managedClan) roleBadge = `<span class="text-[10px] bg-slate-800 text-indigo-300 px-2 py-1 rounded border border-indigo-900/50">${managedClan} CAPTAIN</span>`;
-
         els.navActions.innerHTML = `
-            <div class="flex gap-3 items-center">
-                ${isOwner ? '<button id="btnOpenSuper" class="text-xs bg-indigo-900 text-indigo-400 px-3 py-1 rounded hover:bg-indigo-800 transition">SUPER</button>' : ''}
-                <span class="text-xs text-slate-400 hidden sm:inline">${user.email}</span>
-                ${roleBadge}
-                <button id="btnLogout" class="text-xs text-red-400 px-3 py-1 rounded border border-red-900 hover:bg-red-900/20 transition">LOGOUT</button>
-            </div>`;
-            
-        document.getElementById('btnLogout').addEventListener('click', performLogout);
+            <div class="flex flex-col items-end mr-4">
+                <span class="text-xs font-bold text-white tracking-wide">${displayName}</span>
+                <span class="text-[9px] font-mono text-emerald-400 uppercase tracking-widest bg-emerald-400/10 px-1.5 rounded mt-0.5 border border-emerald-400/20">${roleLabel}</span>
+            </div>
+            ${isOwner ? '<button id="btnOpenSuper" class="btn btn-glass btn-sm h-9 w-9 p-0 flex items-center justify-center" title="Admin Console">⚡</button>' : ''}
+            <button id="btnLogout" class="btn btn-danger btn-sm h-8 text-[10px]">LOGOUT</button>
+        `;
         
-        if(isOwner) {
-            document.getElementById('btnOpenSuper').addEventListener('click', () => els.superPanel.classList.toggle('hidden'));
+        document.getElementById('btnLogout').addEventListener('click', async () => { 
+            await signOut(auth); 
+            window.location.reload(); 
+        });
+        
+        if(isOwner && document.getElementById('btnOpenSuper')) {
+            document.getElementById('btnOpenSuper').addEventListener('click', () => {
+                document.getElementById('superuserPanel').classList.toggle('hidden');
+            });
         }
+
+        const welcome = document.getElementById('welcomeMsg');
+        if(welcome) welcome.innerText = `Welcome Back, ${displayName}`;
         
-        document.getElementById('welcomeMsg').innerText = `Welcome, ${user.displayName || 'Warrior'}`;
-        
-        // 4. CRITICAL: Setup Dropdown based on strict roles
-        setupUploadDropdown();
-        
-        // 5. Refresh List (to show Delete buttons if applicable)
+        populateUploadDropdown(user, roleLabel);
         renderUI(latestStore);
 
     } else {
-        // --- LOGGED OUT ---
-        isAdmin = false;
-        currentUser = null;
-        
-        els.landing.classList.remove('hidden');
-        els.dashboard.classList.add('hidden');
-        els.superPanel?.classList.add('hidden');
-        
-        els.navActions.innerHTML = `<button id="btnLoginOpen" class="bg-slate-800 text-white px-4 py-2 rounded text-xs">LOGIN</button>`;
-        document.getElementById('btnLoginOpen').addEventListener('click', () => toggleModal(els.authModal, true));
-        
-        renderUI(latestStore);
+        if (els.landing) els.landing.classList.remove('hidden');
+        if (els.dashboard) els.dashboard.classList.add('hidden');
+        els.navActions.innerHTML = `<button id="btnLoginOpen" class="btn btn-primary h-10 px-6 shadow-lg shadow-indigo-500/20">LOGIN</button>`;
+        document.getElementById('btnLoginOpen').addEventListener('click', () => window.toggleModal('authModal', true));
     }
 }
 
-// ==========================================
-// 💧 THE FIXED DROPDOWN LOGIC
-// ==========================================
-function setupUploadDropdown() {
-    const s = els.uploadSelect; if(!s) return; s.innerHTML = '';
+function populateUploadDropdown(user, roleLabel) {
+    const s = els.uploadSelect; 
+    s.innerHTML = '';
+    const isOwner = roleLabel === "SUPER ADMIN" || roleLabel === "GENERAL ADMIN";
+    const isChief = roleLabel.includes("CHIEF");
     
-    if (!currentUser) return;
-
-    const email = currentUser.email.toLowerCase();
-    
-    // RE-CALCULATE ROLES LOCALLY (Do not trust global variables)
-    const isOwner = (email === OWNER_EMAIL.toLowerCase());
-    const isGeneral = GENERAL_ADMINS.some(admin => admin.toLowerCase() === email);
-    // Important: 'CLAN_CAPTAINS' keys must match exactly.
-    // Ideally, ensure your api-keys.js emails are lowercase too.
-    const myClan = CLAN_CAPTAINS[email] || CLAN_CAPTAINS[currentUser.email]; 
-
-    console.log(`Dropdown Debug -> User: ${email} | Owner: ${isOwner} | General: ${isGeneral} | Captain of: ${myClan}`);
-
-    if (isOwner || isGeneral) {
-        // CASE A: GOD MODE (Show Everyone)
-        s.innerHTML = '<option value="">-- Select Any Member --</option>';
-        for(const [t,m] of Object.entries(CLAN_DATA)) { 
-            const g = document.createElement('optgroup'); g.label = t; 
-            m.forEach(x => g.appendChild(new Option(x, x)));
+    if (isOwner) {
+         s.innerHTML = '<option value="">-- Select Member --</option>';
+         const sorted = sortClans(CLAN_DATA);
+         for(const[t,m] of sorted) {
+            const g = document.createElement('optgroup'); g.label = t;
+            m.forEach(x => { if(!x.includes("Chief")) g.appendChild(new Option(x,x)); });
             s.appendChild(g);
-        }
-    } 
-    else if (myClan) {
-        // CASE B: CLAN CAPTAIN (Show Only My Clan)
-        s.innerHTML = `<option value="">-- Select ${myClan} Member --</option>`;
-        const members = CLAN_DATA[myClan] || [];
-        const g = document.createElement('optgroup'); g.label = myClan;
-        members.forEach(x => g.appendChild(new Option(x, x)));
-        s.appendChild(g);
-    } 
-    else if (currentUser.displayName) {
-        // CASE C: STUDENT (Show Only Self)
-        s.add(new Option(currentUser.displayName, currentUser.displayName)); 
-        s.disabled = true; 
+         }
+    } else if (isChief) {
+         const myClan = roleLabel.replace(" CHIEF", "").replace("CLAN ", "Clan "); 
+         s.innerHTML = `<option value="">-- Select ${myClan} Member --</option>`;
+         const members = CLAN_DATA[myClan] || [];
+         members.forEach(x => { if(!x.includes("Chief")) s.add(new Option(x,x)); });
+    } else {
+         s.add(new Option(user.displayName, user.displayName)); 
     }
 }
 
-// ==========================================
-// 🔒 SECURE UPLOAD FUNCTION
-// ==========================================
-async function parseAndUpload() {
-    if(!currentUser) return alert("Login required");
+// =========================================================
+// 4. RENDERING & SAVING LOGIC
+// =========================================================
+
+function renderUI(store) {
+    const c = els.teamsContainer; if(!c) return; c.innerHTML = '';
+    const sorted = sortClans(CLAN_DATA);
     
+    let myClan = null;
+    if (currentUser) {
+        const displayName = getSafeName(currentUser);
+        const role = getUserRoleLabel(currentUser.email, displayName);
+        if (role.includes("CHIEF")) myClan = role.replace(" CHIEF", "").replace("CLAN ", "Clan ");
+        else {
+            for (const [cl, ms] of Object.entries(CLAN_DATA)) { if (ms.includes(displayName)) { myClan = cl; break; } }
+        }
+    }
+    if (myClan) {
+        const idx = sorted.findIndex(x => x[0] === myClan);
+        if (idx > -1) { const [t] = sorted.splice(idx, 1); sorted.unshift(t); }
+    }
+
+    for (const [t, m] of sorted) {
+        const email = currentUser ? currentUser.email.toLowerCase() : "";
+        const role = getUserRoleLabel(email);
+        const isOwner = role === "SUPER ADMIN" || role === "GENERAL ADMIN";
+        const isChiefOfThisClan = role === `${t.toUpperCase()} CHIEF`;
+        const canManage = isOwner || isChiefOfThisClan;
+
+        const d = document.createElement('div');
+        d.innerHTML = `
+            <div class="flex items-center gap-4 mb-8 px-2 fade-up">
+                <div class="h-8 w-1 rounded-full bg-gradient-to-b from-brand-primary to-brand-secondary shadow-[0_0_15px_rgba(99,102,241,0.5)]"></div>
+                <h2 class="text-3xl font-black tracking-tighter text-white italic uppercase">${t}</h2>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="grid-${t.replace(/\s/g,'')}"></div>
+        `;
+        const g = d.querySelector(`div[id*="grid-"]`);
+        
+        m.forEach(mem => {
+            if (mem.includes("Chief") || mem.toLowerCase().includes("admin")) return;
+
+            const h = (store[mem] || []).sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+            
+            const card = document.createElement('div'); 
+            card.className = "glass-card group";
+            
+            card.innerHTML = `
+                <div class="card-header group-hover:bg-white/5 transition-colors">
+                    <h3 class="font-bold text-lg text-white tracking-tight flex items-center gap-2">
+                        ${mem}
+                        ${h.length > 0 ? '<span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>' : '<span class="w-2 h-2 rounded-full bg-gray-600"></span>'}
+                    </h3>
+                    ${canManage ? `<button class="text-[10px] font-bold text-red-400 bg-red-500/10 px-2 py-1 rounded hover:bg-red-500 hover:text-white transition" onclick="removeMemberGlobal('${t}','${mem}')">REMOVE</button>` : ''}
+                </div>
+                <div class="card-body custom-scroll p-4 space-y-4"></div>
+            `;
+            const l = card.querySelector('.card-body');
+
+            if (h.length === 0) l.innerHTML = '<div class="h-full flex flex-col items-center justify-center opacity-30"><div class="text-4xl mb-2">💤</div><div class="text-[10px] font-bold uppercase tracking-widest">No Activity</div></div>';
+
+            h.forEach((e, idx) => {
+                if (e.deletedBy && !canManage) return;
+                
+                const isDel = !!e.deletedBy;
+                const canEdit = (canManage || (currentUser && currentUser.displayName === mem)) && !isDel;
+                const safeLinks = encodeURIComponent(JSON.stringify(e.links));
+                
+                // 🛡️ Data Safety: ID Fallback
+                const safeId = e.id || e.timestamp;
+
+                const r = document.createElement('div');
+                r.className = `submission-item relative ${isDel ? 'border-red-500/30 bg-red-500/5' : ''}`;
+                r.style.animationDelay = `${idx * 50}ms`;
+                
+                let html = `<div class="flex justify-between items-start mb-2">`;
+                html += isDel 
+                    ? `<span class="text-[10px] font-bold text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20">DELETED</span>` 
+                    : `<span class="item-badge">${e.day}</span>`;
+                
+                html += `<div class="action-group ml-2">`;
+                if (canEdit) html += `<button onclick="window.openEditModal('${mem}','${safeId}','${e.day}','${safeLinks}','${e.review||''}')" class="icon-box icon-edit" title="Edit">✎</button>`;
+                if (canManage && !isDel) html += `<button onclick="window.deleteSubmissionGlobal('${mem}','${safeId}')" class="icon-box icon-del" title="Delete">🗑</button>`;
+                html += `</div></div>`;
+
+                if (!isDel) {
+                    e.links.forEach(k => { html += `<a href="${k.url}" target="_blank" class="item-link"><span class="opacity-50">🔗</span> ${k.label}</a>`; });
+                    if(e.review) html += `<div class="item-note">"${e.review}"</div>`;
+                }
+
+                // 🔍 NAME RESOLUTION (Fix for "null" names)
+                // 1. Try saved authorName
+                // 2. Try email prefix
+                // 3. Fallback to "Unknown"
+                let postedBy = e.authorName;
+                if (!postedBy && e.author) postedBy = e.author.split('@')[0];
+                if (!postedBy) postedBy = "Unknown";
+
+                let editedBy = e.lastEditedByName;
+                if (!editedBy && e.lastEditedBy) editedBy = e.lastEditedBy.split('@')[0];
+
+                let deletedBy = e.deletedByName;
+                if (!deletedBy && e.deletedBy) deletedBy = e.deletedBy.split('@')[0];
+
+                html += `<div class="mt-3 pt-2 border-t border-white/5 space-y-1">`;
+                
+                // Posted Log
+                html += `<div class="flex justify-between text-[9px] text-gray-500 font-mono">
+                    <span>POSTED:</span> <span title="${postedBy}">${e.createdAtIST || ""}</span>
+                </div>`;
+                
+                // Edited Log
+                if (editedBy) {
+                    html += `<div class="flex justify-between text-[9px] text-amber-500/80 font-mono">
+                        <span>EDITED BY:</span> <span class="font-bold" title="${editedBy}">${editedBy}</span>
+                    </div>`;
+                }
+                
+                // Deleted Log
+                if (deletedBy) {
+                    html += `<div class="flex justify-between text-[9px] text-red-400 font-mono font-bold">
+                        <span>DELETED BY:</span> <span>${deletedBy}</span>
+                    </div>
+                    <div class="text-[9px] text-red-400/60 font-mono text-right">${e.deletedAtIST || 'Unknown Time'}</div>`;
+                }
+                
+                html += `</div>`;
+                r.innerHTML = html;
+                l.appendChild(r);
+            });
+            g.appendChild(card);
+        });
+        c.appendChild(d);
+    }
+}
+
+async function handleSaveEdit() {
+    console.log("💾 Saving Edit...");
+    const m = document.getElementById('editMemberName').value;
+    const id = document.getElementById('editTimestamp').value;
+    
+    if(!m || !id) return showToast("Error: Missing ID", "error");
+
+    const ref = doc(db, "submissions", m);
+    const s = await getDoc(ref);
+    if (!s.exists()) return showToast("Error: Record not found", "error");
+
+    let h = s.data().history;
+    
+    // 🛡️ CRITICAL FIX: Force String Comparison
+    // Some IDs are strings ("17001..."), some numbers (17001...)
+    // This logic ensures they match regardless of type.
+    const i = h.findIndex(x => String(x.id) === String(id) || String(x.timestamp) === String(id));
+    
+    if (i > -1) {
+        h[i].day = document.getElementById('editDay').value;
+        h[i].review = document.getElementById('editReview').value;
+        h[i].links = smartParseLinks(document.getElementById('editLinksRaw').value);
+        
+        // Audit
+        const displayName = getSafeName(currentUser);
+        h[i].lastEditedBy = currentUser.email;
+        h[i].lastEditedByName = displayName; // Save Name
+        h[i].lastEditedAtIST = getIST();
+        
+        await updateDoc(ref, { history: h });
+        window.toggleModal('editModal', false);
+        showToast("Edit Saved Successfully", "success");
+    } else {
+        console.error("ID Mismatch. Looking for:", id, "In:", h);
+        showToast("Error: Could not find entry to update", "error");
+    }
+}
+
+async function parseAndUpload() {
+    if(!currentUser) return showToast("Login Required", "error");
     const btn = document.getElementById('btnUpload');
     const m = els.uploadSelect.value;
     const t = document.getElementById('rawInput').value;
     const r = document.getElementById('uploadReview').value;
     
-    if(!m || !t) return alert("Missing Data");
+    if(!m) return showToast("Select a Member", "error");
+    if(!t) return showToast("Please enter content", "error");
 
-    // --- SECURITY CHECK START ---
-    const email = currentUser.email.toLowerCase();
-    let targetClan = "";
+    btn.disabled = true; btn.innerText = "Transmitting...";
     
-    // Find Target's Clan
-    for (const [cName, members] of Object.entries(CLAN_DATA)) {
-        if (members.includes(m)) { targetClan = cName; break; }
-    }
-
-    const isSelf = (currentUser.displayName === m);
-    const isOwner = (email === OWNER_EMAIL.toLowerCase());
-    const isGeneral = GENERAL_ADMINS.some(x => x.toLowerCase() === email);
-    const managedClan = CLAN_CAPTAINS[email] || CLAN_CAPTAINS[currentUser.email];
-    const isCaptain = (managedClan === targetClan);
-
-    if (!isSelf && !isOwner && !isGeneral && !isCaptain) {
-        alert(`⛔ PERMISSION DENIED.\nYou cannot upload for members of ${targetClan}.`);
-        return;
-    }
-    // --- SECURITY CHECK END ---
-
-    btn.disabled = true; btn.innerText = "⏳ UPLOADING..."; btn.classList.add("opacity-50", "cursor-not-allowed");
-
     try {
         const links = smartParseLinks(t);
-        if (links.length === 0 && !confirm("No links found. Upload anyway?")) throw new Error("Cancelled by user");
-        
-        const day = t.split('\n')[0].replace(/http.*/,'').trim() || "Update";
-        const entry = { 
+        const displayName = getSafeName(currentUser);
+
+        const entry = {
             id: Date.now().toString(), 
-            day, links, review: r, 
-            timestamp: new Date().toISOString(), 
-            author: currentUser.email 
+            day: t.split('\n')[0].replace(/http.*/,'').trim() || "Update", 
+            links, 
+            review: r, 
+            timestamp: new Date().toISOString(),
+            author: currentUser.email, 
+            authorName: displayName, // Save Name
+            authorTitle: getUserRoleLabel(currentUser.email, displayName), 
+            createdAtIST: getIST()
         };
         
         const ref = doc(db, "submissions", m);
@@ -226,228 +405,145 @@ async function parseAndUpload() {
         if(s.exists()) await updateDoc(ref, { history: arrayUnion(entry) });
         else await setDoc(ref, { history: [entry] });
         
-        alert("✅ Success!"); 
+        showToast("Update Posted Successfully", "success");
         document.getElementById('rawInput').value = "";
-        document.getElementById('uploadReview').value = "";
-
-    } catch(err) {
-        if (err.message !== "Cancelled by user") alert("Error: " + err.message);
-    } finally {
-        btn.disabled = false; btn.innerText = "UPLOAD UPDATE"; btn.classList.remove("opacity-50", "cursor-not-allowed");
+    } catch(e) { 
+        showToast(e.message, "error"); 
     }
+    btn.disabled = false; btn.innerText = "UPLOAD UPDATE";
 }
 
-// ==========================================
-// CORE DATA & RENDERING
-// ==========================================
-function loadData() {
-    if (!db) return;
-    onSnapshot(collection(db, "submissions"), (snap) => {
-        const store = {};
-        snap.forEach(doc => store[doc.id] = doc.data().history || []);
-        latestStore = store; 
-        renderUI(store);
-        if(els.loader) els.loader.classList.add('hidden');
-        if(els.teamsContainer) els.teamsContainer.classList.remove('hidden');
-    });
-}
-
-function renderUI(store) {
-    const c = els.teamsContainer; if(!c) return; c.innerHTML = '';
+async function handleDeleteSubmission(member, id) {
+    if(!confirm("⚠️ CONFIRM DELETION?\nThis action will be logged.")) return;
     
-    // 1. 🧠 SMART SORT (Fixes the "Weird Order")
-    // Use 'localeCompare' with {numeric: true} to handle "Clan 1, Clan 2, Clan 10" AND text names perfectly.
-    const sortedClans = Object.entries(CLAN_DATA).sort((a, b) => {
-        return a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' });
-    });
+    const ref = doc(db, "submissions", member);
+    const s = await getDoc(ref);
+    if(!s.exists()) return;
 
-    const email = currentUser ? currentUser.email.toLowerCase() : "";
+    let h = s.data().history;
+    // Force String Comparison here too
+    const i = h.findIndex(x => String(x.id) === String(id) || String(x.timestamp) === String(id));
     
-    // 2. Identify Roles
-    const isOwner = (email === OWNER_EMAIL.toLowerCase());
-    const isGeneral = GENERAL_ADMINS.some(x => x.toLowerCase() === email);
-    // Safety: Handle if CLAN_CAPTAINS is undefined or null
-    const managedClan = (CLAN_CAPTAINS && CLAN_CAPTAINS[email]) || (CLAN_CAPTAINS && CLAN_CAPTAINS[currentUser?.email]);
-
-    // 3. 📌 PIN MY CLAN TO TOP 
-    // Logic: If you are a specific Captain or Student (NOT a General Admin), move your clan to #1.
-    if (currentUser && !isOwner && !isGeneral) {
-        let myClan = managedClan; 
-
-        // If not a Captain, check if they are a regular Member
-        if (!myClan && currentUser.displayName) {
-            for (const [cName, members] of Object.entries(CLAN_DATA)) {
-                if (members.includes(currentUser.displayName)) {
-                    myClan = cName;
-                    break;
-                }
-            }
-        }
-
-        // If we found their clan, move it to the top!
-        if (myClan) {
-            const idx = sortedClans.findIndex(x => x[0] === myClan);
-            if (idx > -1) {
-                const [target] = sortedClans.splice(idx, 1); // Remove it
-                sortedClans.unshift(target); // Paste it at the top
-            }
-        }
-    }
-
-    // 4. Render the List
-    for (const [t, m] of sortedClans) {
-        // Can this user manage THIS clan?
-        const canManageClan = isOwner || isGeneral || (managedClan === t);
-
-        const d = document.createElement('div');
-        d.innerHTML = `<div class="flex items-center gap-4 mb-6"><div class="bg-indigo-600 w-1 h-8 rounded-r"></div><h2 class="text-2xl font-bold text-white">${t}</h2><div class="h-px bg-slate-800 flex-grow"></div></div><div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6" id="grid-${t.replace(/\s/g,'')}"></div>`;
-        const g = d.querySelector(`div[id*="grid-"]`);
+    if(i > -1) {
+        const displayName = getSafeName(currentUser);
+        h[i].deletedBy = currentUser.email;
+        h[i].deletedByName = displayName;
+        h[i].deletedAtIST = getIST();
         
-        m.forEach(mem => {
-            const h = (store[mem] || []).reverse();
-            const card = document.createElement('div');
-            card.className = "glass rounded-xl overflow-hidden flex flex-col h-[500px]";
-            
-            // REMOVE MEMBER BUTTON
-            card.innerHTML = `<div class="p-4 bg-slate-800/80 border-b border-slate-700 flex justify-between"><h3 class="font-bold text-white">${mem}</h3>${canManageClan ? `<button class="text-[10px] text-red-400" onclick="window.removeMemberGlobal('${t}','${mem}')">✕</button>` : ''}</div><div class="p-4 overflow-y-auto custom-scroll flex-grow"></div>`;
-            const l = card.querySelector('.custom-scroll');
-
-            if (h.length === 0) {
-                l.innerHTML = '<div class="text-center py-8 opacity-50"><div class="text-2xl mb-2">⚔️</div><div class="text-xs text-slate-400 font-mono">No battles fought yet.</div></div>';
-            }
-
-            h.forEach(e => {
-                // VISIBILITY: Hide deleted posts from Students
-                if (e.deletedBy && !canManageClan) return;
-
-                const isDeleted = !!e.deletedBy;
-                const bgClass = isDeleted ? "bg-red-900/10 border-red-900/50 grayscale opacity-70" : "bg-slate-900/80 border-slate-700";
-                
-                const r = document.createElement('div');
-                r.className = `${bgClass} p-3 mb-3 rounded border relative group transition-all`;
-                
-                // BUTTON PERMISSIONS
-                const canEdit = (canManageClan || (currentUser && currentUser.displayName === mem)) && !isDeleted;
-                const canDelete = canManageClan && !isDeleted;
-
-                let headerHTML = `<div class="flex justify-between mb-2">`;
-                if (isDeleted) {
-                    headerHTML += `<span class="text-red-400 font-bold text-[10px] uppercase">🗑️ BY: ${e.deletedBy.split('@')[0]}</span>`;
-                } else {
-                    headerHTML += `<span class="text-indigo-400 font-bold text-[10px] uppercase">${e.day}</span>`;
-                }
-
-                headerHTML += `<div class="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">`;
-                
-                // EDIT BUTTON
-                if (canEdit) {
-                    const safeLinks = encodeURIComponent(JSON.stringify(e.links));
-                    headerHTML += `<button onclick="window.openEditModal('${mem}','${e.id||e.timestamp}','${e.day}','${safeLinks}','${e.review||''}')" class="text-blue-400 text-xs hover:text-white">✎</button>`;
-                }
-                // DELETE BUTTON
-                if (canDelete) {
-                    headerHTML += `<button onclick="window.deleteSubmissionGlobal('${mem}','${e.id||e.timestamp}')" class="text-red-500 text-xs hover:text-red-300">🗑️</button>`;
-                }
-                
-                headerHTML += `</div></div>`;
-                r.innerHTML = headerHTML;
-
-                // LINKS
-                if (!isDeleted) {
-                    e.links.forEach(link => {
-                        r.innerHTML += `<a href="${link.url}" target="_blank" class="block text-xs text-slate-300 hover:text-white truncate transition-colors">>> ${link.label}</a>`;
-                    });
-                } else {
-                    r.innerHTML += `<div class="text-[10px] text-red-300/50 italic">Hidden</div>`;
-                }
-                l.appendChild(r);
-            });
-            g.appendChild(card);
-        });
-        c.appendChild(d);
+        await updateDoc(ref, { history: h });
+        showToast("Entry Deleted", "success");
     }
 }
-// ==========================================
-// HELPERS & MODALS
-// ==========================================
-async function performLogin() {
-    try { await signInWithEmailAndPassword(auth, document.getElementById('loginEmail').value, document.getElementById('loginPass').value); toggleModal(els.authModal, false); } 
-    catch (err) { alert(err.message); }
+
+// ... (Rest of setup code)
+function setupEventListeners() {
+    document.getElementById('tabLogin')?.addEventListener('click', (e) => switchTab(e, 'login'));
+    document.getElementById('tabSignup')?.addEventListener('click', (e) => switchTab(e, 'signup'));
+    
+    document.querySelector('#loginForm button')?.addEventListener('click', async () => {
+        try {
+            await signInWithEmailAndPassword(auth, document.getElementById('loginEmail').value, document.getElementById('loginPass').value);
+            window.toggleModal('authModal', false);
+            showToast("Authenticated", "success");
+        } catch(e) { showToast(e.message, "error"); }
+    });
+
+    document.querySelector('#signupForm button')?.addEventListener('click', performSignup);
+    document.getElementById('btnUpload')?.addEventListener('click', parseAndUpload);
+    
+    if(document.getElementById('superuserPanel')) {
+        document.getElementById('btnAddClan')?.addEventListener('click', () => { const n=prompt("Name?"); if(n) createNewClan(n); });
+        document.getElementById('btnAddMember')?.addEventListener('click', () => { const c=prompt("Clan?"); const m=prompt("Name?"); if(c&&m) addMemberToClan(c,m); });
+        document.getElementById('btnSeedDatabase')?.addEventListener('click', seedDatabase);
+    }
 }
+
 async function performSignup() {
-    const name = document.getElementById('signupName').value;
-    if(!name) return alert("Select Identity");
-    try {
-        const cred = await createUserWithEmailAndPassword(auth, document.getElementById('signupEmail').value, document.getElementById('signupPass').value);
-        await updateProfile(cred.user, { displayName: name });
-        window.location.reload();
-    } catch (err) { alert(err.message); }
-}
-async function performLogout() { await signOut(auth); window.location.reload(); }
+    const n = document.getElementById('signupName').value; 
+    const email = document.getElementById('signupEmail').value;
+    const pass = document.getElementById('signupPass').value;
 
-async function handleAddClan() {
-    const name = prompt("Enter New Clan Name:");
-    if(name) { await createNewClan(name); window.location.reload(); }
-}
-async function handleAddMember() {
-    const c = prompt("Clan Name:"); const m = prompt("Member Name:");
-    if(c && m) { if(await addMemberToClan(c, m)) window.location.reload(); else alert("Failed"); }
-}
+    if(!n) return showToast("Select Identity", "error"); 
+    if (REGISTERED_MEMBERS.has(n)) return showToast("Identity taken!", "error");
 
-async function saveEdit() {
-    const m = document.getElementById('editMemberName').value;
-    const id = document.getElementById('editTimestamp').value;
-    const ref = doc(db, "submissions", m);
-    try {
-        const s = await getDoc(ref);
-        const h = s.data().history;
-        const i = h.findIndex(x => x.id === id || x.timestamp === id);
-        if(i > -1) {
-            h[i].day = document.getElementById('editDay').value;
-            h[i].review = document.getElementById('editReview').value;
-            h[i].links = smartParseLinks(document.getElementById('editLinksRaw').value);
-            await updateDoc(ref, { history: h });
-            toggleModal(els.editModal, false);
-            alert("Updated!");
+    try { 
+        const credential = await createUserWithEmailAndPassword(auth, email, pass); 
+        await updateProfile(credential.user, {displayName: n}); 
+        
+        const q = query(collection(db, "users"), where("displayName", "==", n));
+        const check = await getDocs(q);
+        if (!check.empty) {
+            const d = check.docs[0];
+            if(!d.data().email) await deleteDoc(d.ref); 
         }
-    } catch(e) { alert("Update failed: " + e.message); }
+
+        await setDoc(doc(db, "users", credential.user.uid), {
+            displayName: n, email: credential.user.email, role: "Member", createdAt: new Date().toISOString()
+        });
+
+        window.location.reload(); 
+    } catch(e) { showToast(e.message, "error"); } 
 }
 
-function initDropdowns() {
-    const s = document.getElementById('signupName'); if(!s) return; s.innerHTML = '<option value="">-- Identity --</option>';
-    for(const [t,m] of Object.entries(CLAN_DATA)) { const g=document.createElement('optgroup'); g.label=t; m.forEach(x=>{const o=new Option(x,x); g.appendChild(o); s.appendChild(o);}); }
+function sortClans(clansObj) { return Object.entries(clansObj).sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: 'base' })); }
+function showToast(msg, type = 'info') {
+    const c = document.getElementById('toast-container');
+    const t = document.createElement('div'); t.className = `toast ${type}`;
+    t.innerHTML = `<span>${type==='success'?'✅':(type==='error'?'⚠️':'ℹ️')}</span> <span>${msg}</span>`;
+    c.appendChild(t); setTimeout(() => { t.style.animation='slideOut 0.4s forwards'; setTimeout(()=>t.remove(),400); }, 4000);
 }
-function toggleModal(m,s) { s ? m.classList.remove('hidden') : m.classList.add('hidden'); }
-function switchAuthTab(mode) {
-    const l = mode==='login';
-    document.getElementById('loginForm').classList.toggle('hidden', !l);
-    document.getElementById('signupForm').classList.toggle('hidden', l);
+function switchTab(e, mode) {
+    document.querySelectorAll('#authModal button[id^="tab"]').forEach(b => b.className="flex-1 py-2 text-sm text-secondary hover:text-primary transition");
+    e.target.className="flex-1 py-2 text-sm font-bold bg-white text-black rounded-md shadow";
+    document.getElementById('loginForm').classList.toggle('hidden', mode !== 'login');
+    document.getElementById('signupForm').classList.toggle('hidden', mode !== 'signup');
 }
-
-// WINDOW GLOBALS
-window.openEditModal = (m, id, day, l, r) => {
-    document.getElementById('editMemberName').value = m;
-    document.getElementById('editTimestamp').value = id;
-    document.getElementById('editDay').value = day;
-    document.getElementById('editReview').value = r;
-    const links = JSON.parse(decodeURIComponent(l));
-    document.getElementById('editLinksRaw').value = links.map(x => `${x.label} - ${x.url}`).join('\n');
-    toggleModal(els.editModal, true);
-};
-window.removeMemberGlobal = async (c, m) => { if(await removeMember(c, m)) window.location.reload(); };
-window.deleteSubmissionGlobal = async (memberName, submissionId) => {
-    if(!confirm("⚠️ Are you sure? This will hide the post and log your name.")) return;
-    const ref = doc(db, "submissions", memberName);
-    try {
-        const s = await getDoc(ref);
-        if (!s.exists()) return;
-        let h = s.data().history;
-        const i = h.findIndex(x => (x.id === submissionId || x.timestamp === submissionId));
-        if(i > -1) {
-            h[i].deletedBy = currentUser.email; 
-            h[i].deletedAt = new Date().toISOString();
-            await updateDoc(ref, { history: h });
-            alert("🗑️ Post deleted.");
+function subscribeToRegistry() {
+    onSnapshot(collection(db, "users"), (snap) => {
+        REGISTERED_MEMBERS = new Set();
+        snap.forEach((doc) => { const d = doc.data(); if (d.displayName && d.email) REGISTERED_MEMBERS.add(d.displayName); });
+        if(currentUser) populateUploadDropdown(currentUser, getUserRoleLabel(currentUser.email, currentUser.displayName || getSafeName(currentUser)));
+        else initDropdowns();
+    });
+}
+function initDropdowns() { 
+    const signupSelect = document.getElementById('signupName');
+    if(signupSelect) {
+        signupSelect.innerHTML = '<option value="">-- Select Identity --</option>'; 
+        const sorted = sortClans(CLAN_DATA); 
+        for(const [t,m] of sorted) { 
+            const g = document.createElement('optgroup'); g.label = t; 
+            let has = false;
+            m.forEach(x => { 
+                if (!x.includes("Chief") && !REGISTERED_MEMBERS.has(x)) { g.appendChild(new Option(x, x)); has = true; } 
+            });
+            if (has) signupSelect.appendChild(g); 
         }
-    } catch(e) { console.error(e); alert("Delete failed: " + e.message); }
-};
+    }
+}
+function loadSubmissions() {
+    onSnapshot(collection(db, "submissions"), (s) => {
+        const st = {}; s.forEach(d => st[d.id] = d.data().history || []);
+        latestStore = st;
+        els.loader.classList.add('hidden'); els.teamsContainer.classList.remove('hidden');
+        renderUI(st);
+    });
+}
+function initPhysics() {
+    const canvas = document.getElementById('cosmos-canvas'); if(!canvas) return;
+    const ctx = canvas.getContext('2d');
+    let stars = [];
+    const resize = () => { canvas.width = window.innerWidth; canvas.height = window.innerHeight; };
+    window.addEventListener('resize', resize); resize();
+    class Star { constructor() { this.reset(); } reset() { this.x = Math.random() * canvas.width; this.y = Math.random() * canvas.height; this.z = Math.random() * 2; this.o = Math.random(); } update() { this.y -= 0.5; if(this.y < 0) this.reset(); this.o = Math.random(); } draw() { ctx.fillStyle = `rgba(255,255,255,${this.o})`; ctx.beginPath(); ctx.arc(this.x, this.y, this.z, 0, Math.PI*2); ctx.fill(); } }
+    stars = Array.from({ length: 150 }, () => new Star());
+    const loop = () => { ctx.clearRect(0,0,canvas.width,canvas.height); stars.forEach(s => {s.update(); s.draw();}); requestAnimationFrame(loop); };
+    loop();
+}
+function initTheme() {
+    const btn = document.getElementById('themeToggle');
+    if(btn) btn.addEventListener('click', () => {
+        const next = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', next); localStorage.setItem('theme', next);
+    });
+}

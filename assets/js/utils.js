@@ -1,64 +1,62 @@
 export function smartParseLinks(rawText) {
     if (!rawText) return [];
     
-    const lines = rawText.split('\n');
+    const lines = rawText.split(/\r?\n/);
     const links = [];
     
     // 🧠 ULTRA-SMART REGEX
-    // 1. Matches http/https/www explicitly
-    // 2. Matches ANY domain (word.extension) where extension is 2+ chars
-    // 3. Filters out common code file extensions like .js or .css to avoid false positives
-    // 4. Catches long URL paths
-    const urlRegex = /((https?:\/\/)|(www\.)|(?!.*(\.js|\.css|\.html)$)[a-zA-Z0-9][a-zA-Z0-9-]{1,61}\.[a-zA-Z]{2,})(\/[^\s]*)?/gi;
+    // 1. Matches http/s or www.
+    // 2. OR matches domains ending in common TLDs to catch "bare" links (e.g. leetcode.com)
+    // 3. Excludes things that look like filenames but aren't links
+    const urlRegex = /((https?:\/\/)|(www\.)|([a-zA-Z0-9-]+\.(com|org|net|io|in|me|app|dev|edu|gov|co|biz|info)))([\/\w\.-]*)*\/?/gi;
+    const junkRegex = /\.(css|js|json|html|png|jpg|jpeg|gif|svg)$/i;
 
     lines.forEach(line => {
-        let cleanLine = line.trim();
-        if (!cleanLine) return;
-        
-        // Skip lines that are clearly just the "Day X" header
-        if (/^day\s*\d+/i.test(cleanLine)) return;
+        const cleanLine = line.trim();
+        // Skip purely numeric/header lines if they are short (e.g. "Day 10")
+        if (!cleanLine || (/^(day|update)\s*\d*/i.test(cleanLine) && cleanLine.length < 15)) return;
 
-        // Find ALL links in the line (Global Match)
-        // This catches multiple links in one row
-        const matches = [...cleanLine.matchAll(urlRegex)];
+        const matches = cleanLine.match(urlRegex);
 
-        if (matches.length > 0) {
+        if (matches && matches.length > 0) {
             matches.forEach(match => {
-                let url = match[0];
+                let url = match;
+                
+                // 🛑 Skip junk (e.g. "style.css")
+                if (junkRegex.test(url)) return;
 
-                // 🧹 CLEANUP: Remove trailing punctuation
-                // Catches things like "google.com," or "(google.com)"
-                url = url.replace(/[).,;\]]+$/, "");
+                // 🧹 Cleanup trailing punctuation (e.g. "leetcode.com.")
+                url = url.replace(/[.,;)]+$/, "");
 
-                // 🔗 PROTOCOL FIX: Add https if missing
+                // 🔗 Protocol Fixer (ensure https://)
                 let finalUrl = url;
                 if (!finalUrl.startsWith('http')) {
                     finalUrl = 'https://' + finalUrl;
                 }
 
-                // 🏷️ LABEL LOGIC
-                let label = "";
-
-                // Scenario A: Line has text + ONE link (e.g., "Two Sum - leetcode.com")
-                // We extract "Two Sum" as the label
-                if (matches.length === 1) {
-                    label = cleanLine.replace(match[0], '')   // Remove the URL text
-                                   .replace(/[\[\]()]/g, '')  // Remove remaining brackets
-                                   .replace(/^[-:–>\s]+|[-:–<\s]+$/g, '') // Trim separators like "- " or ": "
+                // 🏷️ Label Extractor
+                // Strategy 1: Use remaining text in the line (e.g. "Two Sum - https://...")
+                let label = cleanLine.replace(match, '')
+                                   .replace(/[\[\]()]/g, '')
+                                   .replace(/^[-:–>\s]+|[-:–<\s]+$/g, '') // Trim separators like " - "
                                    .trim();
-                }
 
-                // Scenario B: No text found OR Multiple links on one line
-                // We generate a pretty label from the domain (e.g., "leetcode.com" -> "Leetcode")
-                if (!label || label.length < 2) {
+                // Strategy 2: If no text, use the Domain Name (e.g. "Leetcode Problem")
+                if (!label || label.length < 2 || label.toLowerCase() === 'link') {
                     try {
-                        const hostname = new URL(finalUrl).hostname;
-                        // Remove 'www.' and get the main name
-                        const name = hostname.replace('www.', '').split('.')[0];
-                        // Capitalize it (e.g., "leetcode" -> "Leetcode")
+                        const u = new URL(finalUrl);
+                        const hostname = u.hostname.replace(/^www\./, '');
+                        // Get main domain (e.g. "leetcode.com" -> "Leetcode")
+                        const parts = hostname.split('.');
+                        let name = parts[0];
+                        if (parts.length > 2) name = parts[1]; // Handle subdomains
+                        
                         label = name.charAt(0).toUpperCase() + name.slice(1);
+                        
+                        // Add path hint if useful
+                        if (u.pathname.length > 1) label += " Problem";
                     } catch (e) {
-                        label = "View Link";
+                        label = "External Link";
                     }
                 }
 
