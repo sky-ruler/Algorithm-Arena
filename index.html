@@ -3,27 +3,17 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Algorithm Arena | Warzone</title>
+    <title>Loading...</title> <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>">
     
-    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>⚔️</text></svg>">
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
-    
     <script src="https://cdn.tailwindcss.com"></script>
-    
     <link rel="stylesheet" href="assets/css/style.css">
 </head>
 <body class="antialiased">
 
     <canvas id="cosmos-canvas"></canvas>
-    
     <div class="noise-overlay"></div>
-    
-    <div class="liquid-blobs">
-        <div class="blob blob-1"></div>
-        <div class="blob blob-2"></div>
-    </div>
-
-    <div id="toast-container" class="fixed bottom-6 right-6 z-[300] flex flex-col items-end gap-3"></div>
+    <div class="aurora-glow"></div> <div id="toast-container" class="fixed bottom-6 right-6 z-[300] flex flex-col items-end gap-3"></div>
 
     <nav>
         <div class="glass-nav">
@@ -32,44 +22,33 @@
                     AA
                 </div>
                 <div class="flex flex-col">
-                    <span class="font-bold text-primary text-sm tracking-tight leading-none">Algorithm</span>
-                    <span class="text-[10px] text-secondary uppercase tracking-widest leading-none mt-1">Arena</span>
+                    <span id="navTitle" class="font-bold text-primary text-sm tracking-tight leading-none">...</span>
+                    <span id="navSubtitle" class="text-[10px] text-secondary uppercase tracking-widest leading-none mt-1">...</span>
                 </div>
             </div>
-            
             <div class="flex items-center gap-4">
-                <button id="themeToggle" class="icon-btn" aria-label="Toggle Theme">
-                    <span>🌑</span>
-                </button>
+                <button id="themeToggle" class="icon-btn" aria-label="Toggle Theme"><span>🌑</span></button>
                 <div id="navActions" class="flex items-center gap-3"></div>
             </div>
         </div>
     </nav>
 
     <header id="landing" class="relative z-10 flex flex-col items-center justify-center min-h-[85vh] text-center px-4 fade-up">
-        <div class="max-w-3xl mx-auto">
-            <h1 class="text-6xl md:text-8xl font-bold tracking-tighter mb-6 text-primary">
-                WELCOME TO THE <span class="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-cyan-400">WARZONE</span>
-            </h1>
-            <p class="text-xl md:text-2xl text-secondary max-w-xl mx-auto mb-10 leading-relaxed font-normal">
-                Track your daily progress, compete with other clans, and master Data Structures & Algorithms.
-            </p>
-            <button onclick="window.toggleModal('authModal', true)" class="btn btn-primary scale-125 px-8 h-12 text-lg shadow-xl">
-                ENTER THE ARENA
+        <div class="max-w-4xl mx-auto">
+            <h1 id="heroHeadline" class="text-6xl md:text-8xl font-bold tracking-tighter mb-6 text-primary">Loading...</h1>
+            <p id="heroSubtext" class="text-xl md:text-2xl text-secondary max-w-2xl mx-auto mb-10 leading-relaxed font-normal"></p>
+            
+            <button id="heroLoginBtn" onclick="window.toggleModal('authModal', true)" class="btn btn-primary scale-125 px-8 h-12 text-lg shadow-xl hover:shadow-indigo-500/40 transition-all duration-300">
+                ...
             </button>
             
-            <div class="mt-16 flex gap-8 justify-center text-[11px] font-semibold text-tertiary uppercase tracking-widest opacity-60">
-                <span>⚡ 9 CLANS</span>
-                <span>🔥 DAILY UPDATES</span>
-                <span>🏆 LIVE TRACKING</span>
-            </div>
+            <div id="heroBadges" class="mt-16 flex gap-8 justify-center text-[11px] font-semibold text-tertiary uppercase tracking-widest opacity-60"></div>
         </div>
     </header>
 
-    <main id="dashboard" class="hidden max-w-7xl mx-auto px-4 pb-32 relative z-10 fade-up">
-        
-        <section class="glass-panel p-10 mb-12">
-            <div class="flex justify-between items-center mb-8">
+    <main id="dashboard" class="hidden max-w-[1400px] mx-auto px-4 pb-32 relative z-10 fade-up">
+        <section class="glass-panel p-8 mb-12">
+            <div class="flex justify-between items-center mb-6">
                 <h2 class="text-2xl font-bold text-primary flex items-center gap-3">
                     <span class="w-2.5 h-2.5 rounded-full bg-emerald-500 shadow-[0_0_10px_#10b981] animate-pulse"></span>
                     <span id="welcomeMsg">Welcome</span>
@@ -77,31 +56,27 @@
             </div>
             
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div class="lg:col-span-2 space-y-6">
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+                <div class="lg:col-span-2 space-y-4">
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                         <div class="input-group">
                             <select id="uploadSelect" class="modern-input cursor-pointer"></select>
                             <span class="input-arrow">▼</span>
                         </div>
                         <input type="text" id="uploadReview" placeholder="Add a note (Optional)" class="modern-input">
                     </div>
-                    <textarea id="rawInput" rows="5" class="modern-input font-mono text-sm leading-relaxed" placeholder="Day 10&#10;Two Sum - https://leetcode.com/..."></textarea>
-                    <button id="btnUpload" class="btn btn-primary w-full tracking-wide">Upload Update</button>
+                    <textarea id="rawInput" rows="4" class="modern-input font-mono text-sm leading-relaxed"></textarea>
+                    <button id="btnUpload" class="btn btn-primary w-full tracking-wide">UPLOAD UPDATE</button>
                 </div>
                 
-                <div class="glass-panel p-8 flex flex-col justify-center border border-white/5 bg-white/5">
+                <div class="glass-panel p-6 flex flex-col justify-center border border-white/5 bg-white/5">
                     <h4 class="text-brand-primary font-bold text-xs uppercase tracking-widest mb-4">FORMAT GUIDE</h4>
-                    <ul class="space-y-3 text-sm text-secondary font-medium">
-                        <li class="flex items-center gap-3"><span class="text-emerald-500">✓</span> Start with "Day X"</li>
-                        <li class="flex items-center gap-3"><span class="text-emerald-500">✓</span> Format: Topic - Link</li>
-                        <li class="flex items-center gap-3"><span class="text-emerald-500">✓</span> Multiple links supported</li>
-                    </ul>
+                    <ul id="formatGuideList" class="space-y-3 text-sm text-secondary font-medium"></ul>
                 </div>
             </div>
         </section>
 
         <section id="superuserPanel" class="hidden glass-panel p-6 mb-16 flex flex-wrap gap-4 justify-between items-center border-l-4 border-brand-primary">
-            <span class="text-brand-primary font-bold text-xs uppercase tracking-widest pl-2">Admin Console</span>
+            <span class="text-brand-primary font-bold text-xs uppercase tracking-widest pl-2">COMMAND CENTER</span>
             <div class="flex gap-2">
                 <button id="btnAddClan" class="btn btn-glass btn-sm">+ Clan</button>
                 <button id="btnAddMember" class="btn btn-glass btn-sm">+ Member</button>
@@ -110,8 +85,8 @@
         </section>
 
         <div id="loader" class="text-center py-24">
-            <div class="w-10 h-10 border-4 border-brand-primary/30 border-t-brand-primary rounded-full animate-spin mx-auto"></div>
-            <p class="text-secondary text-xs font-bold mt-6 tracking-widest">SYNCING DATABASE...</p>
+            <div class="w-12 h-12 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin mx-auto"></div>
+            <p class="text-secondary text-xs font-bold mt-6 tracking-widest">ESTABLISHING UPLINK...</p>
         </div>
 
         <div id="teamsContainer" class="space-y-16 hidden"></div>
@@ -120,21 +95,18 @@
     <div id="authModal" class="modal-backdrop hidden">
         <div class="modal-content glass-panel p-10 w-full max-w-sm">
             <div class="flex justify-between items-center mb-8">
-                <h3 class="text-xl font-bold text-primary">Identity</h3>
+                <h3 class="text-xl font-bold text-primary">Identity Protocol</h3>
                 <button class="text-secondary hover:text-primary text-xl" onclick="window.toggleModal('authModal', false)">✕</button>
             </div>
-            
-            <div class="flex p-1 rounded-lg mb-6 bg-black/10">
+            <div class="flex p-1 rounded-lg mb-6 bg-black/20">
                 <button id="tabLogin" class="flex-1 py-2 text-sm font-bold bg-white text-black rounded-md shadow-sm transition">Login</button>
                 <button id="tabSignup" class="flex-1 py-2 text-sm text-secondary hover:text-primary transition">Register</button>
             </div>
-            
             <div id="loginForm" class="space-y-4">
                 <input type="email" id="loginEmail" placeholder="Email Address" class="modern-input">
                 <input type="password" id="loginPass" placeholder="Password" class="modern-input">
                 <button class="btn btn-primary w-full mt-2">Sign In</button>
             </div>
-            
             <div id="signupForm" class="hidden space-y-4">
                 <div class="input-group">
                     <select id="signupName" class="modern-input"></select>
@@ -149,17 +121,13 @@
 
     <div id="editModal" class="modal-backdrop hidden">
         <div class="modal-content glass-panel p-10 w-full max-w-lg">
-            <h3 class="text-xl font-bold text-primary mb-6">Edit Entry</h3>
-            
-            <input type="hidden" id="editMemberName">
-            <input type="hidden" id="editTimestamp">
-            
+            <h3 class="text-xl font-bold text-primary mb-6">Modify Log</h3>
+            <input type="hidden" id="editMemberName"><input type="hidden" id="editTimestamp">
             <div class="space-y-4">
                 <input type="text" id="editDay" class="modern-input" placeholder="Title (e.g. Day 1)">
-                <textarea id="editLinksRaw" rows="4" class="modern-input font-mono text-sm" placeholder="Links (One per line)"></textarea>
+                <textarea id="editLinksRaw" rows="4" class="modern-input font-mono text-sm" placeholder="Links..."></textarea>
                 <input type="text" id="editReview" class="modern-input" placeholder="Note / Review">
             </div>
-            
             <div class="flex gap-4 mt-8">
                 <button class="btn btn-glass flex-1" onclick="window.toggleModal('editModal', false)">Cancel</button>
                 <button class="btn btn-primary flex-1" onclick="window.saveEdit()">Save Changes</button>

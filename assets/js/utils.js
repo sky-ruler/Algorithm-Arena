@@ -1,69 +1,75 @@
-export function smartParseLinks(rawText) {
-    if (!rawText) return [];
-    
-    const lines = rawText.split(/\r?\n/);
+/**
+ * 🔗 QUANTUM LINK PARSER v3.0 (Context Aware)
+ * 1. Detects if user provided a label (e.g. "My Solution - http...")
+ * 2. Falls back to Smart Labeling only if raw link is found.
+ * 3. Handles multiple links per line or multiple lines.
+ */
+export function smartParseLinks(text) {
+    if (!text) return [];
+
     const links = [];
-    
-    // 🧠 ULTRA-SMART REGEX
-    // 1. Matches http/s or www.
-    // 2. OR matches domains ending in common TLDs to catch "bare" links (e.g. leetcode.com)
-    // 3. Excludes things that look like filenames but aren't links
-    const urlRegex = /((https?:\/\/)|(www\.)|([a-zA-Z0-9-]+\.(com|org|net|io|in|me|app|dev|edu|gov|co|biz|info)))([\/\w\.-]*)*\/?/gi;
-    const junkRegex = /\.(css|js|json|html|png|jpg|jpeg|gif|svg)$/i;
+    const lines = text.split('\n'); // Process line-by-line to keep context
 
     lines.forEach(line => {
-        const cleanLine = line.trim();
-        // Skip purely numeric/header lines if they are short (e.g. "Day 10")
-        if (!cleanLine || (/^(day|update)\s*\d*/i.test(cleanLine) && cleanLine.length < 15)) return;
+        const trimmed = line.trim();
+        if (!trimmed) return;
 
-        const matches = cleanLine.match(urlRegex);
+        // 1. EXTRACT URL
+        // Finds http, https, or www.
+        const urlRegex = /((https?:\/\/)|(www\.))[^\s,)]+/i;
+        const match = trimmed.match(urlRegex);
 
-        if (matches && matches.length > 0) {
-            matches.forEach(match => {
-                let url = match;
+        if (match) {
+            let url = match[0];
+            // Clean trailing punctuation
+            url = url.replace(/[.,;)]+$/, "");
+
+            // Normalize protocol
+            let finalUrl = url;
+            if (!url.startsWith("http")) finalUrl = "https://" + url;
+
+            // 2. DETERMINE LABEL
+            // Remove the URL from the line to see if there is text left
+            let potentialLabel = trimmed.replace(match[0], "").trim();
+
+            // Cleanup common separators people use (e.g., " - ", ": ", "Link ->")
+            potentialLabel = potentialLabel.replace(/^[-:=>•\s]+|[-:<=•\s]+$/g, "");
+
+            let finalLabel = "";
+
+            if (potentialLabel.length > 1) {
+                // ✅ CASE A: USER PROVIDED A LABEL
+                finalLabel = potentialLabel;
+            } else {
+                // 🤖 CASE B: AUTO-GENERATE SMART LABEL
+                const lowerUrl = finalUrl.toLowerCase();
                 
-                // 🛑 Skip junk (e.g. "style.css")
-                if (junkRegex.test(url)) return;
-
-                // 🧹 Cleanup trailing punctuation (e.g. "leetcode.com.")
-                url = url.replace(/[.,;)]+$/, "");
-
-                // 🔗 Protocol Fixer (ensure https://)
-                let finalUrl = url;
-                if (!finalUrl.startsWith('http')) {
-                    finalUrl = 'https://' + finalUrl;
-                }
-
-                // 🏷️ Label Extractor
-                // Strategy 1: Use remaining text in the line (e.g. "Two Sum - https://...")
-                let label = cleanLine.replace(match, '')
-                                   .replace(/[\[\]()]/g, '')
-                                   .replace(/^[-:–>\s]+|[-:–<\s]+$/g, '') // Trim separators like " - "
-                                   .trim();
-
-                // Strategy 2: If no text, use the Domain Name (e.g. "Leetcode Problem")
-                if (!label || label.length < 2 || label.toLowerCase() === 'link') {
+                if (lowerUrl.includes("leetcode.com")) finalLabel = "LeetCode Problem 🧠";
+                else if (lowerUrl.includes("github.com")) finalLabel = "GitHub Repo 💻";
+                else if (lowerUrl.includes("drive.google.com")) finalLabel = "Google Drive 📂";
+                else if (lowerUrl.includes("youtube.com") || lowerUrl.includes("youtu.be")) finalLabel = "YouTube Video 📺";
+                else if (lowerUrl.includes("geeksforgeeks.org")) finalLabel = "GeeksForGeeks 🟢";
+                else if (lowerUrl.includes("hackerrank.com")) finalLabel = "HackerRank 🚩";
+                else if (lowerUrl.includes("codechef.com")) finalLabel = "CodeChef 👨‍🍳";
+                else if (lowerUrl.includes("figma.com")) finalLabel = "Figma Design 🎨";
+                else if (lowerUrl.includes("notion.so")) finalLabel = "Notion Doc 📝";
+                else if (lowerUrl.includes("linkedin.com")) finalLabel = "LinkedIn Post 💼";
+                else {
                     try {
-                        const u = new URL(finalUrl);
-                        const hostname = u.hostname.replace(/^www\./, '');
-                        // Get main domain (e.g. "leetcode.com" -> "Leetcode")
-                        const parts = hostname.split('.');
-                        let name = parts[0];
-                        if (parts.length > 2) name = parts[1]; // Handle subdomains
-                        
-                        label = name.charAt(0).toUpperCase() + name.slice(1);
-                        
-                        // Add path hint if useful
-                        if (u.pathname.length > 1) label += " Problem";
+                        const urlObj = new URL(finalUrl);
+                        finalLabel = urlObj.hostname.replace("www.", "") + " 🔗";
                     } catch (e) {
-                        label = "External Link";
+                        finalLabel = "External Resource 🔗";
                     }
                 }
+            }
 
-                links.push({ label, url: finalUrl });
+            links.push({
+                url: finalUrl,
+                label: finalLabel
             });
         }
     });
-    
+
     return links;
 }
