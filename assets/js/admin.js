@@ -53,6 +53,10 @@ export async function fetchSystemRoles() {
  * Adds a new member to a specific Clan.
  * AUTOMATICALLY creates a "Placeholder" identity for them to claim.
  */
+/**
+ * Adds a new member to a specific Clan.
+ * CORRECTED: Uses "Clan_Name" ID format so users can actually claim this spot.
+ */
 export async function addMemberToClan(clanName, memberName) {
     if (!clanName || !memberName) return false;
     
@@ -62,30 +66,28 @@ export async function addMemberToClan(clanName, memberName) {
         
         if (docSnap.exists()) {
             const structure = docSnap.data().structure;
-            
-            // Initialize clan if it doesn't exist
             if (!structure[clanName]) structure[clanName] = [];
             
-            // Prevent duplicates in the visual list
             if (!structure[clanName].includes(memberName)) {
                 structure[clanName].push(memberName);
                 
-                // 1. Update the Roster List
+                // 1. Update Roster
                 await updateDoc(docRef, { structure });
                 
-                // 2. Create the "Claimable" Placeholder
-                // We use a timestamp ID to ensure uniqueness for new adds
-                const placeholderId = `manual_add_${Date.now()}`;
-                await setDoc(doc(db, "users", placeholderId), {
+                // 2. Create Claimable Placeholder (FIXED ID FORMAT)
+                // NOW matches the logic in app.js
+                const fixedId = `${clanName}_${memberName}`; 
+                
+                await setDoc(doc(db, "users", fixedId), {
                     displayName: memberName,
-                    email: null, // <--- Null email means "Available to Claim"
+                    email: null, // Waiting for claim
                     clan: clanName,
                     role: "Member",
                     createdAt: new Date().toISOString(),
                     isManualAdd: true
                 });
 
-                alert(`✅ Successfully enlisted ${memberName} into ${clanName}.`);
+                alert(`✅ ${memberName} added to ${clanName} (ID: ${fixedId})`);
                 return true;
             } else {
                 alert(`⚠️ ${memberName} is already in the roster.`);
